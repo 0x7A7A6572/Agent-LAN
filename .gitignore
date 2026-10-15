@@ -8,3 +8,6 @@ dist/
 # è¿è¡Œæ—¶æ•°æ®
 .roles.json
 .orders.json
+
+# ½ÚµãÃû²áÔËĞĞÊ±ÂäÅÌ
+.nodes.json
