@@ -29,22 +29,10 @@ const emit = defineEmits<{
   (e: 'create-child', parent: Order): void
 }>()
 
-const STATUSES: OrderStatus[] = ['backlog', 'analyzing', 'developing', 'testing', 'review', 'done', 'canceled']
-
 const expanded = defineModel<Record<string, boolean>>('expanded', { default: () => ({}) })
 
 const childrenOf = (id: string) => props.allOrders.filter(o => o.parent === id)
 const hasChildren = (id: string) => props.allOrders.some(o => o.parent === id)
-
-const statusVariant: Record<OrderStatus, 'default' | 'secondary' | 'outline' | 'destructive'> = {
-  backlog: 'secondary',
-  analyzing: 'outline',
-  developing: 'default',
-  testing: 'outline',
-  review: 'outline',
-  done: 'secondary',
-  canceled: 'destructive',
-}
 
 function toggle(id: string) {
   expanded.value = { ...expanded.value, [id]: !expanded.value[id] }
@@ -61,7 +49,6 @@ function toggle(id: string) {
         <TableHead class="w-[110px]">工单类型</TableHead>
         <TableHead class="w-[120px]">状态</TableHead>
         <TableHead class="w-[140px]">处理人 / 截止</TableHead>
-        <TableHead class="w-[110px]">流转</TableHead>
         <TableHead class="w-12" />
       </TableRow>
     </TableHeader>
@@ -76,7 +63,7 @@ function toggle(id: string) {
               <ChevronDown v-if="expanded[order.id]" class="h-4 w-4" />
               <ChevronRight v-else class="h-4 w-4" />
             </button>
-            <Checkbox v-else :model-value="order.status === 'done'" @click="emit('status-change', order.id, order.status === 'done' ? 'backlog' : 'done')" />
+            <Checkbox v-else :model-value="order.status === 'done'" disabled />
           </TableCell>
           <TableCell>
             <button class="flex items-center gap-1.5 text-left text-sm font-medium hover:underline" @click="emit('select', order.id)">
@@ -107,15 +94,6 @@ function toggle(id: string) {
             </span>
           </TableCell>
           <TableCell>
-            <select
-              class="h-7 rounded-md border bg-transparent px-1.5 text-xs text-foreground"
-              :value="order.status"
-              @change="emit('status-change', order.id, ($event.target as HTMLSelectElement).value as OrderStatus)"
-            >
-              <option v-for="s in STATUSES" :key="s" :value="s">{{ s }}</option>
-            </select>
-          </TableCell>
-          <TableCell>
             <DropdownMenu>
               <DropdownMenuTrigger as-child>
                 <Button variant="ghost" size="icon" class="h-7 w-7">
@@ -135,7 +113,7 @@ function toggle(id: string) {
             <GripVertical class="h-4 w-4 opacity-0 transition-opacity group-hover:opacity-100" />
           </TableCell>
           <TableCell>
-            <Checkbox :model-value="child.status === 'done'" @click="emit('status-change', child.id, child.status === 'done' ? 'backlog' : 'done')" />
+            <Checkbox :model-value="child.status === 'done'" disabled />
           </TableCell>
           <TableCell class="pl-8">
             <span class="text-sm">{{ child.title }}</span>
@@ -160,15 +138,6 @@ function toggle(id: string) {
               <User class="h-3.5 w-3.5" />
               {{ child.assignee ?? '未指派' }}
             </span>
-          </TableCell>
-          <TableCell>
-            <select
-              class="h-7 rounded-md border bg-transparent px-1.5 text-xs text-foreground"
-              :value="child.status"
-              @change="emit('status-change', child.id, ($event.target as HTMLSelectElement).value as OrderStatus)"
-            >
-              <option v-for="s in STATUSES" :key="s" :value="s">{{ s }}</option>
-            </select>
           </TableCell>
           <TableCell />
         </TableRow>
