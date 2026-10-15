@@ -24,7 +24,6 @@ const adapter = adapters[adapterKind]?.() ?? adapters.claude();
 
 const card: AgentCard = {
   name: agentName,
-  isMainNode: true,
   description: "multi-agent-connect 节点 (" + adapterKind + ")",
   url: "http://0.0.0.0:" + port,
   version: "0.0.1",
