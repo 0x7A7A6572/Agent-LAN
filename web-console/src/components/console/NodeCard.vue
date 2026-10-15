@@ -95,12 +95,12 @@ async function send() {
 
     <!-- 留言弹窗 -->
     <Dialog v-model:open="mailOpen">
-      <DialogContent class="sm:max-w-md">
+      <DialogContent class="gap-3 sm:max-w-sm">
         <DialogHeader>
           <DialogTitle>发留言给 {{ presence.card.name }}</DialogTitle>
           <DialogDescription>以 human-console 身份投递到节点邮箱，节点下次领任务时收取</DialogDescription>
         </DialogHeader>
-        <Textarea v-model="mailText" :rows="4" placeholder="留言内容…" @keydown.enter.ctrl="send" />
+        <Textarea v-model="mailText" :rows="3" class="min-h-0 resize-none" placeholder="留言内容…" @keydown.enter.ctrl="send" />
         <DialogFooter>
           <Button variant="outline" @click="mailOpen = false">取消</Button>
           <Button :disabled="!mailText.trim() || sending" @click="send">发送</Button>
