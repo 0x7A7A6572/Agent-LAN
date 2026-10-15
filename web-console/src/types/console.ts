@@ -17,6 +17,7 @@ export interface Presence {
   workingOn?: string
   groupHost?: string
   lastSeen: number
+  mcpActive?: boolean
 }
 
 export type OrderStatus =

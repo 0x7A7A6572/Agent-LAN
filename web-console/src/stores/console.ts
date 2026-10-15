@@ -92,6 +92,20 @@ export const useConsoleStore = defineStore('console', () => {
     return r
   }
 
+  async function deleteOrder(id: string) {
+    const r = await api.deleteOrder(id)
+    await refreshOrders()
+    return r
+  }
+
+  async function deleteNode(name: string) {
+    const r = await api.deleteNode(name)
+    return r
+  }
+
+  // 工单状态由 agent 侧更新：轮询保持列表与详情实时
+  setInterval(refreshOrders, 2000)
+
   return {
     presences,
     sseStatus,
@@ -109,5 +123,7 @@ export const useConsoleStore = defineStore('console', () => {
     refreshOrders,
     updateOrderStatus,
     createOrder,
+    deleteOrder,
+    deleteNode,
   }
 })

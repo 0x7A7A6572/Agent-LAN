@@ -58,6 +58,14 @@ export const updateOrder = (id: string, patch: Partial<Order>) =>
     body: JSON.stringify(patch),
   }).then(r => r.json() as Promise<{ order?: Order; error?: string }>)
 
+export const deleteOrder = (id: string) =>
+  fetch('/console/orders/' + id, { method: 'DELETE' }).then(r => r.json() as Promise<{ ok: boolean }>)
+
+export const deleteNode = (name: string) =>
+  fetch('/console/nodes/' + encodeURIComponent(name), { method: 'DELETE' }).then(r =>
+    r.json() as Promise<{ ok: boolean; error?: string }>,
+  )
+
 export const sendMail = (to: string, text: string) => rpc('mailbox/send', { to, text, from: 'human-console' })
 
 export const dispatchTask = (target: string, prompt: string) => rpc('message/send', { prompt, target })

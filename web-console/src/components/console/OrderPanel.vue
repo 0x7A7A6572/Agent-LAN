@@ -9,6 +9,7 @@ import {
 } from '@/components/ui/dialog'
 import CreateOrderDialog from './CreateOrderDialog.vue'
 import OrderTree from './OrderTree.vue'
+import { useConsoleStore } from '@/stores/console'
 import type { Order, OrderDetail, OrderPriority, OrderStatus } from '@/types/console'
 
 const props = defineProps<{
@@ -19,6 +20,14 @@ const emit = defineEmits<{
   (e: 'create', body: { title: string; assignee?: string; priority: OrderPriority; parent?: string; description?: string }): void
   (e: 'status-change', id: string, status: OrderStatus): void
 }>()
+const store = useConsoleStore()
+
+// 未完成工单删除前确认；done/canceled 直接删
+function onDelete(order: Order) {
+  const finished = order.status === 'done' || order.status === 'canceled'
+  if (!finished && !confirm('工单「' + order.title + '」尚未完成，确定删除？')) return
+  store.deleteOrder(order.id)
+}
 
 const createOpen = ref(false)
 const childParent = ref<{ id: string; title: string } | null>(null)
@@ -66,6 +75,7 @@ defineExpose({ showDetail })
         @select="showDetail"
         @status-change="(id, s) => emit('status-change', id, s)"
         @create-child="o => (childParent = { id: o.id, title: o.title }, createOpen = true)"
+        @delete="onDelete"
       />
       <div v-if="!orders.length" class="py-8 text-center text-sm text-muted-foreground">还没有工单</div>
     </div>

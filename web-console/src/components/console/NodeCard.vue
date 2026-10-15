@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { Mail, Monitor, TrendingUp } from 'lucide-vue-next'
+import { Mail, Monitor, Pencil, TrendingUp } from 'lucide-vue-next'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -19,7 +19,10 @@ import { logoOf } from '@/composables/useLogo'
 import type { Presence } from '@/types/console'
 
 const props = defineProps<{ presence: Presence }>()
-const emit = defineEmits<{ (e: 'pick-role', name: string, role: string): void }>()
+const emit = defineEmits<{
+  (e: 'pick-role', name: string, role: string): void
+  (e: 'delete-node', name: string): void
+}>()
 
 const store = useConsoleStore()
 const logo = computed(() => logoOf(props.presence.card.name))
@@ -35,6 +38,13 @@ const sending = ref(false)
 
 function log(line: string) {
   store.logs = [...store.logs, line]
+}
+
+// 右键删除节点记录：仍在线的会被下次心跳重新注册
+function onContextmenu(e: MouseEvent) {
+  e.preventDefault()
+  if (!confirm('删除节点记录 ' + props.presence.card.name + ' ？\n仍在线的节点会在下次心跳重新出现。')) return
+  emit('delete-node', props.presence.card.name)
 }
 
 async function send() {
@@ -57,19 +67,33 @@ async function send() {
   <Card
     class="flex flex-col gap-3 py-4 pb-1 transition-colors"
     :class="working ? 'border-blue-600/60' : presence.online ? '' : 'opacity-55'"
+    @contextmenu="onContextmenu"
   >
     <CardHeader class="px-4">
       <div class="flex items-center gap-2">
         <img v-if="logo" :src="logo" alt="" class="size-5 rounded object-contain" />
         <CardTitle class="text-sm font-medium">{{ presence.card.name }}</CardTitle>
-        <Badge variant="outline" class="ml-auto gap-1">
-          <span class="size-1.5 rounded-full" :class="presence.online ? 'bg-green-500' : 'bg-muted-foreground/40'" />
-          {{ presence.online ? '在线' : '离线' }}
+        <Badge
+          variant="outline"
+          class="ml-auto gap-1 line-clamp-1"
+          :class="working ? 'border-blue-500/60 text-blue-500' : presence.online && !presence.mcpActive ? 'border-yellow-500/60 text-yellow-600' : ''"
+        >
+          <span
+            class="size-1.5 rounded-full"
+            :class="working ? 'animate-pulse bg-blue-500' : presence.online ? (presence.mcpActive ? 'bg-green-500' : 'bg-yellow-500') : 'bg-muted-foreground/40'"
+          />
+          {{ working ? '执行中' : presence.online ? (presence.mcpActive ? '在线' : '在线·仅心跳') : '离线' }}
         </Badge>
       </div>
-      <div class="mt-2 flex items-center text-xl font-semibold leading-none">
+      <button
+        class="mt-2 flex items-center gap-1 text-left text-xl font-semibold leading-none hover:text-blue-500"
+        :class="presence.role ? '' : 'text-muted-foreground/60'"
+        title="点击设定角色"
+        @click="emit('pick-role', presence.card.name, presence.role || '')"
+      >
         {{ presence.role || '设定角色' }}
-      </div>
+        <Pencil class="h-3.5 w-3.5 opacity-50" />
+      </button>
       <p class="flex items-center gap-1 text-sm text-muted-foreground">
         <TrendingUp v-if="working" class="h-4 w-4 text-blue-500" />
         {{ working ? '执行中 · ' + (presence.workingOn || '') : presence.online ? '空闲' : '离线' }}

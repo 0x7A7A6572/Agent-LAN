@@ -27,6 +27,7 @@ const emit = defineEmits<{
   (e: 'select', id: string): void
   (e: 'status-change', id: string, status: OrderStatus): void
   (e: 'create-child', parent: Order): void
+  (e: 'delete', order: Order): void
 }>()
 
 const expanded = defineModel<Record<string, boolean>>('expanded', { default: () => ({}) })
@@ -79,7 +80,7 @@ function toggle(id: string) {
             <span class="flex items-center gap-1.5 text-sm">
               <span
                 class="flex size-4 items-center justify-center rounded-full"
-                :class="order.status === 'done' ? 'bg-green-600' : order.status === 'canceled' ? 'bg-destructive' : 'border border-muted-foreground/40'"
+                :class="order.status === 'done' ? 'bg-green-600' : order.status === 'canceled' ? 'bg-destructive' : order.status === 'developing' || order.status === 'testing' ? 'animate-pulse bg-blue-500' : 'border border-muted-foreground/40'"
               >
                 <svg v-if="order.status === 'done'" class="size-3 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6 9 17l-5-5" /></svg>
               </span>
@@ -103,6 +104,7 @@ function toggle(id: string) {
               <DropdownMenuContent align="end">
                 <DropdownMenuItem @click="emit('select', order.id)">查看详情</DropdownMenuItem>
                 <DropdownMenuItem v-if="!order.parent" @click="emit('create-child', order)">添加子工单</DropdownMenuItem>
+                <DropdownMenuItem class="text-destructive" @click="emit('delete', order)">删除工单</DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
           </TableCell>
@@ -127,7 +129,7 @@ function toggle(id: string) {
             <span class="flex items-center gap-1.5 text-sm">
               <span
                 class="flex size-4 items-center justify-center rounded-full"
-                :class="child.status === 'done' ? 'bg-green-600' : 'border border-muted-foreground/40'"
+                :class="child.status === 'done' ? 'bg-green-600' : child.status === 'developing' || child.status === 'testing' ? 'animate-pulse bg-blue-500' : 'border border-muted-foreground/40'"
               >
                 <svg v-if="child.status === 'done'" class="size-3 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6 9 17l-5-5" /></svg>
               </span>

@@ -95,6 +95,11 @@ async function onPmSave(text: string) {
   else log('[pm] 保存失败: ' + (r.error || '未知错误'))
 }
 
+async function onDeleteNode(name: string) {
+  const r = await store.deleteNode(name)
+  if (!r.ok) log('[node] 删除失败: ' + (r.error || '节点不存在'))
+}
+
 async function onOrderCreate(body: { title: string; assignee?: string; priority: string; parent?: string }) {
   const r = await store.createOrder(body)
   if (r.error) log('[order] 建单失败: ' + r.error)
@@ -152,6 +157,7 @@ function onStatusChange(id: string, status: OrderStatus) {
             :key="p.card.name"
             :presence="p"
             @pick-role="onPickRole"
+            @delete-node="onDeleteNode"
           />
         </div>
         <div v-if="store.presences.length > 8" class="text-xs text-muted-foreground">
