@@ -36,7 +36,7 @@ export interface McpFacadeDeps {
   orderList: (filter: Parameters<OrderStore["list"]>[0]) => Order[];
   /** 给工单挂产物文件 */
   orderAttach: (id: string, name: string, contentBase64: string, by: string) => FileRef;
-  log: (line: string) => void;
+  log: (line: string, level?: "info" | "debug") => void;
 }
 
 const TOOLS = [
@@ -317,7 +317,7 @@ export async function mcpHandle(raw: string, req: http.IncomingMessage, res: htt
               capabilities: { streaming: false, adapters: ["mcp"] }
             };
             const r = deps.checkIn(card, sourceIp);
-            deps.log("++ " + card.name + " checked in via MCP");
+            deps.log("++ " + card.name + " checked in via MCP", "debug");
             reply(toolResult({ ok: r.ok, heartbeatMs: r.intervalMs, offlineAfterMs: 40000, yourName: card.name }));
             return;
           }

@@ -26,6 +26,8 @@ export interface ServerOptions {
   filesDir?: string;
   /** 工单落盘文件，缺省 filesDir 同级 .orders.json */
   ordersPath?: string;
+  /** debug 日志（心跳/check_in 刷屏类）是否显示，默认否 */
+  debugLogs?: boolean;
 }
 
 const terminalStates: ReadonlySet<TaskState> = new Set(["completed", "failed", "canceled"]);
@@ -36,7 +38,9 @@ export function createServer(options: ServerOptions): http.Server {
   const sseClients = new Map<string, Set<http.ServerResponse>>();
   const presenceSubs = new Set<http.ServerResponse>();
   const logs: string[] = [];
-  const log = (line: string) => {
+  const log = (line: string, level: "info" | "debug" = "info") => {
+    // debug 级默认不入日志：心跳类高频刷屏用
+    if (level === "debug" && !options.debugLogs) return;
     const stamped = new Date().toLocaleTimeString("zh-CN", { hour12: false }) + " " + line;
     logs.push(stamped);
     if (logs.length > 200) logs.shift();
