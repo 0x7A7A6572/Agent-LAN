@@ -325,10 +325,34 @@ export function createServer(options: ServerOptions): http.Server {
       res.end(JSON.stringify({ logs }));
       return;
     }
-    if (req.method === "POST" && url.pathname === "/mcp") {
-      let body = "";
-      for await (const chunk of req) body += chunk;
-      await mcpRoute(body, req, res);
+    if (url.pathname === "/mcp") {
+      res.setHeader("access-control-allow-origin", "*");
+      res.setHeader("access-control-allow-methods", "GET, POST, DELETE, OPTIONS");
+      res.setHeader("access-control-allow-headers", "content-type, mcp-session-id, mcp-protocol-version, authorization, accept");
+      res.setHeader("access-control-expose-headers", "mcp-session-id");
+      if (req.method === "OPTIONS") { res.writeHead(204); res.end(); return; }
+      if (req.method === "POST") {
+        let body = "";
+        for await (const chunk of req) body += chunk;
+        await mcpRoute(body, req, res);
+        return;
+      }
+      if (req.method === "GET") {
+        // Streamable HTTP 的 SSE 下行流：保持连接，服务端主动消息时可用
+        res.writeHead(200, {
+          "content-type": "text/event-stream",
+          "cache-control": "no-cache",
+          connection: "keep-alive"
+        });
+        res.write(": stream open\n\n");
+        const ka = setInterval(() => res.write(": ping\n\n"), 15000);
+        ka.unref?.();
+        req.on("close", () => clearInterval(ka));
+        return;
+      }
+      if (req.method === "DELETE") { res.writeHead(204); res.end(); return; }
+      res.writeHead(405, { allow: "GET, POST, DELETE, OPTIONS" });
+      res.end();
       return;
     }
     if (req.method === "POST" && url.pathname === "/") {

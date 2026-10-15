@@ -1,5 +1,6 @@
 // MCP 门面：把入站协议包装成 MCP 工具，agent 加一行配置即可入网
 import http from "node:http";
+import { randomUUID } from "node:crypto";
 import type { AgentCard } from "@mac/sdk";
 
 export interface McpFacadeDeps {
@@ -180,13 +181,16 @@ export async function mcpHandle(raw: string, req: http.IncomingMessage, res: htt
   };
 
   switch (msg.method) {
-    case "initialize":
+    case "initialize": {
+      // 无状态实现：给客户端发一个会话标头，容忍它后续回传
+      res.setHeader("mcp-session-id", randomUUID());
       reply({
         protocolVersion: msg.params?.protocolVersion ?? "2025-06-18",
         capabilities: { tools: {} },
         serverInfo: { name: "multi-agent-connect", version: "0.0.1" }
       });
       return;
+    }
     case "notifications/initialized":
       reply(undefined);
       return;
