@@ -20,6 +20,7 @@ export class OrderStore {
   private save(): void {
     clearTimeout(this.saveTimer);
     this.saveTimer = setTimeout(() => {
+      this.saveTimer = undefined;
       const arr = [...this.orders.values()];
       fs.writeFileSync(this.filePath, JSON.stringify(arr, null, 2));
     }, 500);
@@ -56,6 +57,14 @@ export class OrderStore {
     this.orders.set(order.id, order);
     this.save();
     return order;
+  }
+
+  /** 立即落盘并取消待写定时器，进程退出前调用防丢尾写 */
+  flushNow(): void {
+    if (!this.saveTimer) return;
+    clearTimeout(this.saveTimer);
+    this.saveTimer = undefined;
+    fs.writeFileSync(this.filePath, JSON.stringify([...this.orders.values()], null, 2));
   }
 
   get(id: string): Order | undefined { return this.orders.get(id); }

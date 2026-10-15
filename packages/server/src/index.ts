@@ -9,6 +9,7 @@ import { AGENT_CARD_PATH, A2A_METHODS } from "@mac/sdk";
 import { Registry } from "./registry.js";
 import { createRemoteProxy } from "./remote-proxy.js";
 import { FileChannel } from "./file-channel.js";
+import { OrderStore } from "./orders.js";
 import { mcpHandle, type McpFacadeDeps } from "./mcp-facade.js";
 export { createTui } from "./tui.js";
 export { createRemoteProxy } from "./remote-proxy.js";
@@ -23,6 +24,8 @@ export interface ServerOptions {
   onLog?: (line: string) => void;
   /** 文件通道存储目录，缺省 .mac-files */
   filesDir?: string;
+  /** 工单落盘文件，缺省 filesDir 同级 .orders.json */
+  ordersPath?: string;
 }
 
 const terminalStates: ReadonlySet<TaskState> = new Set(["completed", "failed", "canceled"]);
@@ -116,6 +119,13 @@ export function createServer(options: ServerOptions): http.Server {
   }
 
   const fileChannel = new FileChannel(options.filesDir ?? ".mac-files", "http://" + FileChannel.lanAddress() + ":" + options.port);
+  const orderStore = new OrderStore(options.ordersPath
+    ?? path.join(path.resolve(options.filesDir ?? ".mac-files"), "..", ".orders.json"));
+  // 落盘是防抖的：退出前同步 flush，防尾写丢失
+  const flushOrders = () => orderStore.flushNow();
+  process.on("exit", flushOrders);
+  process.on("SIGINT", () => { flushOrders(); process.exit(0); });
+  process.on("SIGTERM", () => { flushOrders(); process.exit(0); });
 
   if (options.selfRegister !== false) {
     registry.heartbeat(options.card);
@@ -476,6 +486,18 @@ const mcpDeps: McpFacadeDeps = {
   },
   uploadFile: (name, dataBase64) => fileChannel.save(name, Buffer.from(dataBase64, "base64")),
   downloadFile: storedName => fileChannel.open(storedName)?.toString("base64"),
+  orderCreate: (input, by) => orderStore.create(input, by),
+  orderGet: id => {
+    const o = orderStore.get(id);
+    return o ? { order: o, children: orderStore.children(id) } : null;
+  },
+  orderUpdate: (id, patch, by) => orderStore.update(id, patch, by),
+  orderList: f => orderStore.list(f),
+  orderAttach: (id, name, contentBase64, by) => {
+    const uri = fileChannel.save(name, Buffer.from(contentBase64, "base64"));
+    orderStore.attach(id, { name, uri, by });
+    return { name, uri, by };
+  },
   log
 };
 function mcpRoute(body: string, req: http.IncomingMessage, res: http.ServerResponse, sourceIp: string): Promise<void> {
