@@ -5,7 +5,7 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
-    "build": "tsc -p tsconfig.json && node -e \"const fs=require('fs');['console.html','worker.sh','probe.sh'].forEach(f=>fs.copyFileSync('src/'+f,'dist/'+f));fs.cpSync('src/logos','dist/logos',{recursive:true});fs.copyFileSync('../../docs/agent-onboarding.md','dist/install.md')\"",
+    "build": "tsc -p tsconfig.json && node -e \"const fs=require('fs');['console.html','worker.sh','probe.sh'].forEach(f=>fs.copyFileSync('src/'+f,'dist/'+f));fs.cpSync('src/logos','dist/logos',{recursive:true});fs.copyFileSync('../../docs/agent-onboarding.md','dist/install.md');fs.copyFileSync('../../docs/pm-onboarding.md','dist/pm.md')\"",
     "dev": "tsc -p tsconfig.json --watch",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },

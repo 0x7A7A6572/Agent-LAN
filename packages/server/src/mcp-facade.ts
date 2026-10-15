@@ -2,6 +2,8 @@
 import http from "node:http";
 import { randomUUID } from "node:crypto";
 import type { AgentCard } from "@mac/sdk";
+import type { Order, OrderCreateInput, OrderUpdateInput, FileRef } from "./types.js";
+import type { OrderStore } from "./orders.js";
 
 export interface McpFacadeDeps {
   /** 注册自己（心跳）；sourceIp 用于 inbound 节点自动分组 */
@@ -24,7 +26,17 @@ export interface McpFacadeDeps {
   uploadFile: (name: string, dataBase64: string) => string;
   /** 读文件（base64） */
   downloadFile: (storedName: string) => string | undefined;
-  log: (line: string) => void;
+  /** 建工单 */
+  orderCreate: (input: OrderCreateInput, by: string) => Order;
+  /** 查工单（含子单） */
+  orderGet: (id: string) => { order: Order; children: { id: string; title: string; status: string }[] } | null;
+  /** 改工单（状态/依赖约束由存储层校验） */
+  orderUpdate: (id: string, patch: OrderUpdateInput, by: string) => Order;
+  /** 看板过滤 */
+  orderList: (filter: Parameters<OrderStore["list"]>[0]) => Order[];
+  /** 给工单挂产物文件 */
+  orderAttach: (id: string, name: string, contentBase64: string, by: string) => FileRef;
+  log: (line: string, level?: "info" | "debug") => void;
 }
 
 const TOOLS = [
@@ -138,8 +150,92 @@ const TOOLS = [
       properties: { storedName: { type: "string" } },
       required: ["storedName"]
     }
+  },
+  {
+    name: "mac_order_create",
+    description: "建工单。可建母单，也可 parent 指向母单建子单；blockedBy 表达依赖，全 done 后才能离开 backlog",
+    inputSchema: {
+      type: "object",
+      properties: {
+        title: { type: "string", description: "做什么，一句话" },
+        description: { type: "string", description: "验收标准与依赖产物 URI" },
+        priority: { type: "string", enum: ["urgent", "high", "normal", "low"] },
+        tags: { type: "array", items: { type: "string" } },
+        assignee: { type: "string" },
+        owner: { type: "string" },
+        startDate: { type: "string" },
+        dueDate: { type: "string" },
+        parent: { type: "string", description: "母单 id" },
+        blockedBy: { type: "array", items: { type: "string" }, description: "依赖的工单 id 列表" }
+      },
+      required: ["title"]
+    }
+  },
+  {
+    name: "mac_order_get",
+    description: "查工单全量：字段、timeline 流转记录、attachments 产物、children 子单列表",
+    inputSchema: {
+      type: "object",
+      properties: { id: { type: "string" } },
+      required: ["id"]
+    }
+  },
+  {
+    name: "mac_order_update",
+    description: "改工单：状态推进、改处理人、改依赖等。每次变更记入 timeline。离开 backlog 时依赖必须全 done",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string" },
+        status: { type: "string" },
+        priority: { type: "string", enum: ["urgent", "high", "normal", "low"] },
+        tags: { type: "array", items: { type: "string" } },
+        assignee: { type: "string" },
+        owner: { type: "string" },
+        startDate: { type: "string" },
+        dueDate: { type: "string" },
+        description: { type: "string" },
+        blockedBy: { type: "array", items: { type: "string" } },
+        force: { type: "boolean", description: "绕过依赖等待，环检测仍生效" },
+        note: { type: "string", description: "变更说明，写入流转记录" }
+      },
+      required: ["id"]
+    }
+  },
+  {
+    name: "mac_order_list",
+    description: "看板：列出工单，按 status / assignee / tag / parent / priority 过滤，按优先级排序",
+    inputSchema: {
+      type: "object",
+      properties: {
+        status: { type: "string" },
+        assignee: { type: "string" },
+        tag: { type: "string" },
+        parent: { type: "string" },
+        priority: { type: "string" }
+      }
+    }
+  },
+  {
+    name: "mac_order_attach",
+    description: "给工单挂产物文件：内容 base64 上传到共享文件区，返回局域网 URI 并记入工单",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string" },
+        name: { type: "string" },
+        contentBase64: { type: "string" }
+      },
+      required: ["id", "name", "contentBase64"]
+    }
   }
 ];
+
+// spec：参数错回 -32602，其余内部错误 -32000
+const PARAM_ERROR_MARKS = ["缺少", "不存在", "非法", "成环", "不能依赖", "依赖未完成"];
+function orderErrorCode(msg: string): number {
+  return PARAM_ERROR_MARKS.some(m => msg.includes(m)) ? -32602 : -32000;
+}
 
 function toolResult(data: unknown): unknown {
   return {
@@ -221,7 +317,7 @@ export async function mcpHandle(raw: string, req: http.IncomingMessage, res: htt
               capabilities: { streaming: false, adapters: ["mcp"] }
             };
             const r = deps.checkIn(card, sourceIp);
-            deps.log("++ " + card.name + " checked in via MCP");
+            deps.log("++ " + card.name + " checked in via MCP", "debug");
             reply(toolResult({ ok: r.ok, heartbeatMs: r.intervalMs, offlineAfterMs: 40000, yourName: card.name }));
             return;
           }
@@ -274,6 +370,65 @@ export async function mcpHandle(raw: string, req: http.IncomingMessage, res: htt
             reply(toolResult(data !== undefined
               ? { contentBase64: data }
               : { error: "文件不存在: " + a.storedName }));
+            return;
+          }
+          case "mac_order_create": {
+            try {
+              const o = deps.orderCreate({
+                title: a.title == null ? "" : String(a.title), description: a.description ? String(a.description) : undefined,
+                priority: a.priority as any, tags: a.tags, assignee: a.assignee ? String(a.assignee) : undefined,
+                owner: a.owner ? String(a.owner) : undefined, startDate: a.startDate, dueDate: a.dueDate,
+                parent: a.parent ? String(a.parent) : undefined,
+                blockedBy: Array.isArray(a.blockedBy) ? a.blockedBy.map(String) : undefined,
+                source: "mcp"
+              }, String(a.by ?? "mcp"));
+              reply(toolResult(o));
+            } catch (err: any) {
+              replyError(orderErrorCode(String(err?.message ?? err)), String(err?.message ?? err));
+            }
+            return;
+          }
+          case "mac_order_get": {
+            const r = deps.orderGet(String(a.id));
+            reply(toolResult(r ?? { error: "工单不存在: " + a.id }));
+            return;
+          }
+          case "mac_order_update": {
+            try {
+              const o = deps.orderUpdate(String(a.id), {
+                status: a.status ? String(a.status) : undefined,
+                priority: a.priority as any, tags: a.tags,
+                assignee: a.assignee ? String(a.assignee) : undefined,
+                owner: a.owner ? String(a.owner) : undefined,
+                startDate: a.startDate, dueDate: a.dueDate,
+                description: a.description ? String(a.description) : undefined,
+                blockedBy: Array.isArray(a.blockedBy) ? a.blockedBy.map(String) : undefined,
+                force: Boolean(a.force),
+                note: a.note ? String(a.note) : undefined
+              }, String(a.by ?? "mcp"));
+              reply(toolResult(o));
+            } catch (err: any) {
+              replyError(orderErrorCode(String(err?.message ?? err)), String(err?.message ?? err));
+            }
+            return;
+          }
+          case "mac_order_list": {
+            reply(toolResult(deps.orderList({
+              status: a.status ? String(a.status) : undefined,
+              assignee: a.assignee ? String(a.assignee) : undefined,
+              tag: a.tag ? String(a.tag) : undefined,
+              parent: a.parent ? String(a.parent) : undefined,
+              priority: a.priority ? String(a.priority) : undefined
+            })));
+            return;
+          }
+          case "mac_order_attach": {
+            try {
+              const ref = deps.orderAttach(String(a.id), String(a.name), String(a.contentBase64), String(a.by ?? "mcp"));
+              reply(toolResult(ref));
+            } catch (err: any) {
+              replyError(orderErrorCode(String(err?.message ?? err)), String(err?.message ?? err));
+            }
             return;
           }
           default:
