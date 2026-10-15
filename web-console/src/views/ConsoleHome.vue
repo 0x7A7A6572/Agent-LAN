@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useConsoleStore } from '@/stores/console'
-import { sendMail, dispatchTask, setNodeRole, saveRoles, savePmDoc, clearLogs } from '@/api/console'
+import { sendMail, dispatchTask, setNodeRole, saveRoles, savePmDoc } from '@/api/console'
 import CreateOrderDialog from '@/components/console/CreateOrderDialog.vue'
 import NodeCard from '@/components/console/NodeCard.vue'
 import OrderPanel from '@/components/console/OrderPanel.vue'
@@ -144,8 +144,6 @@ function onStatusChange(id: string, status: OrderStatus) {
             <DropdownMenuSeparator />
             <DropdownMenuItem @click="rolesOpen = true">角色库</DropdownMenuItem>
             <DropdownMenuItem @click="pmOpen = true">PM 设定</DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem @click="clearLogs(); store.logs = []">清空日志</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </span>
