@@ -31,15 +31,17 @@ export function createTui(state: TuiState): (line?: string) => void {
       if (!groups.has(h)) groups.set(h, []);
       groups.get(h)!.push(p);
     }
+    let firstGroup = true;
     for (const [host, members] of groups) {
+      if (!firstGroup) rows.push("");
+      firstGroup = false;
       const anyOn = members.some(p => p.online);
       rows.push((anyOn ? GREEN : GRAY) + "▣ " + host + RESET + DIM + "  (" + members.filter(p => p.online).length + "/" + members.length + " 在线)" + RESET);
       for (const p of members) {
-        const mark = p.online ? GREEN + "  ●" : GRAY + "  ○";
+        const mark = p.online ? GREEN + "  ├ ●" : GRAY + "  ├ ○";
         const time = new Date(p.lastSeen).toLocaleTimeString("zh-CN", { hour12: false });
         rows.push(mark + " " + p.card.name.padEnd(12) + DIM + p.card.description?.slice(0, 40) + "  " + time + RESET);
       }
-      rows.push("");
     }
     if (presences.length === 0) rows.push(DIM + "（暂无其他节点接入）" + RESET);
     rows.push("");
