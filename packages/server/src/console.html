@@ -193,6 +193,7 @@
   const grid = document.getElementById("grid");
   const summary = document.getElementById("summary");
   const logbox = document.getElementById("logbox");
+  let view = "agents";
 
   // keyed 增量渲染：卡片 DOM 与节点共存亡，输入框永不重建
   const cards = new Map(); // name -> {el, badge, meta, say, input, dot}
@@ -267,6 +268,8 @@
         c.role.classList.toggle("has", !!roleName);
       }
       c.role.onclick = () => pickRole(p.card.name, roleName);
+      // 名册到达后同步两个节点下拉（工单视图可能先于首帧名册打开）
+      if (view === "orders") fillOrderAssignees();
       // 分组容器（懒创建）
       const host = g(p);
       let groupEl = document.getElementById("grp-" + CSS.escape(host)) || createGroup(host, p, anyOnOf(sorted, host));
@@ -458,30 +461,32 @@
   // ---------- 视图切换 ----------
   const orderView = document.getElementById("orderView");
   const sumText = document.getElementById("sumText");
-  let view = "agents";
   function setView(v) {
     view = v;
     document.getElementById("tabAgents").classList.toggle("on", v === "agents");
     document.getElementById("tabOrders").classList.toggle("on", v === "orders");
     grid.style.display = v === "agents" ? "" : "none";
     orderView.style.display = v === "orders" ? "flex" : "none";
-    if (v === "orders") { refreshOrders(); fillFabTargets(); }
+    if (v === "orders") { refreshOrders(); fillOrderAssignees(); }
   }
   document.getElementById("tabAgents").addEventListener("click", () => setView("agents"));
   document.getElementById("tabOrders").addEventListener("click", () => setView("orders"));
   // summary.textContent 的调用改为只写 sumText
-  const origSummary = summary;
-  window.__sumText = sumText;
 
   // ---------- 工单看板 ----------
   const orderListEl = document.getElementById("orderList");
   const orderDetailEl = document.getElementById("orderDetail");
   const STATUSES = ["backlog", "analyzing", "developing", "testing", "review", "done", "canceled"];
+  let assigneesBuilt = "";
   function fillOrderAssignees() {
     const sel = document.getElementById("onAssignee");
+    const names = [...cards.keys()].sort();
+    const sig = names.join("|");
+    if (sig === assigneesBuilt) return;
+    assigneesBuilt = sig;
     const prev = sel.value;
     sel.innerHTML = "<option value=''>指派给…</option>" +
-      [...cards.keys()].sort().map(n => "<option value='" + esc(n) + "'>" + esc(n) + "</option>").join("");
+      names.map(n => "<option value='" + esc(n) + "'>" + esc(n) + "</option>").join("");
     if ([...sel.options].some(o => o.value === prev)) sel.value = prev;
   }
   async function refreshOrders() {
