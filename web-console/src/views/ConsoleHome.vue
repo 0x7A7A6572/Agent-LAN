@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { Plus, Settings } from 'lucide-vue-next'
 import { useConsoleStore } from '@/stores/console'
 import { sendMail, dispatchTask, setNodeRole, saveRoles, savePmDoc } from '@/api/console'
 import CreateOrderDialog from '@/components/console/CreateOrderDialog.vue'
