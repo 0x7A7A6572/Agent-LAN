@@ -15,6 +15,8 @@ export interface McpFacadeDeps {
   getTask: (taskId: string) => unknown;
   /** 列出在册节点 */
   listAgents: () => unknown;
+  /** 给节点留言（人随时介入的通道） */
+  sendMail: (to: string, text: string, from: string) => { ok: boolean };
   /** 上传文件，返回局域网 URI */
   uploadFile: (name: string, dataBase64: string) => string;
   /** 读文件（base64） */
@@ -96,6 +98,19 @@ const TOOLS = [
     name: "mac_list_agents",
     description: "列出局域网内当前所有节点与在线状态",
     inputSchema: { type: "object", properties: {} }
+  },
+  {
+    name: "mac_send_message",
+    description: "给局域网内另一个节点留言。对方下次领取任务时会看到。适合发指令补充、优先级调整、纠偏",
+    inputSchema: {
+      type: "object",
+      properties: {
+        to: { type: "string", description: "目标节点名" },
+        text: { type: "string", description: "留言内容" },
+        from: { type: "string", description: "你的名字或身份" }
+      },
+      required: ["to", "text"]
+    }
   },
   {
     name: "mac_upload_file",
@@ -203,8 +218,8 @@ export async function mcpHandle(raw: string, req: http.IncomingMessage, res: htt
             // MCP 工具调用者身份：优先取参数里的 name（多 agent 共用一份配置时各自传自己的名字）
             const caller = String(a.name ?? "unknown");
             const waitMs = Math.min(Number(a.waitMs) || 20000, 25000);
-            const task = await deps.pullTask(caller, waitMs);
-            reply(toolResult({ task }));
+            const r = await deps.pullTask(caller, waitMs) as { task: unknown; messages?: unknown[] };
+            reply(toolResult({ task: r?.task ?? null, messages: r?.messages ?? [] }));
             return;
           }
           case "mac_report": {
@@ -227,6 +242,11 @@ export async function mcpHandle(raw: string, req: http.IncomingMessage, res: htt
           }
           case "mac_list_agents": {
             reply(toolResult(deps.listAgents()));
+            return;
+          }
+          case "mac_send_message": {
+            const ok = deps.sendMail(String(a.to), String(a.text), String(a.from ?? "anonymous"));
+            reply(toolResult({ ok }));
             return;
           }
           case "mac_upload_file": {

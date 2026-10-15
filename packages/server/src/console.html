@@ -33,6 +33,17 @@
     font-size: 10px; padding: 1px 6px; border-radius: 10px;
     border: 1px solid #30363d; color: #8b949e; margin-left: auto;
   }
+  .say { display: flex; gap: 6px; margin-top: 8px; }
+  .say input {
+    flex: 1; background: #0d1117; border: 1px solid #30363d; border-radius: 6px;
+    color: #c9d1d9; font-size: 12px; padding: 4px 8px; outline: none;
+  }
+  .say input:focus { border-color: #58a6ff; }
+  .say button {
+    background: #21262d; border: 1px solid #30363d; border-radius: 6px;
+    color: #c9d1d9; font-size: 12px; padding: 4px 10px; cursor: pointer;
+  }
+  .say button:hover { background: #30363d; }
   #logbox {
     flex: 1; overflow-y: auto; background: #010409; border: 1px solid #30363d;
     border-radius: 8px; padding: 10px; font-size: 12px; line-height: 1.7;
@@ -64,7 +75,8 @@
         "<h2><span class='dot'></span>" + esc(p.card.name) +
         "<span class='badge'>" + (p.online ? "在线" : "离线") + "</span></h2>" +
         "<div class='url'>" + esc(p.card.url) + "</div>" +
-        "<div class='meta'>" + esc(p.card.description || "") + " · 心跳 " + seen + "</div>";
+        "<div class='meta'>" + esc(p.card.description || "") + " · 心跳 " + seen + "</div>" +
+        "<div class='say'><input placeholder='留言插话…' data-to='" + esc(p.card.name) + "'><button data-to='" + esc(p.card.name) + "'>发送</button></div>";
       grid.appendChild(div);
     }
   }
@@ -87,6 +99,36 @@
     try { render(JSON.parse(e.data).presences || []); } catch {}
   };
   es.onerror = () => { summary.textContent = "连接中断，重连中…"; };
+
+  async function sendMessage(to, text) {
+    if (!text) return;
+    try {
+      const r = await fetch("/", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: Date.now(), method: "mailbox/send",
+          params: { to, text, from: "human-console" } })
+      }).then(r => r.json());
+      if (r.error) appendLog("[mail] 发送失败: " + r.error.message);
+      else appendLog("[mail] 我 -> " + to + ": " + text);
+    } catch (e) { appendLog("[mail] 发送失败: " + e.message); }
+  }
+  grid.addEventListener("click", e => {
+    const btn = e.target.closest("button[data-to]");
+    if (!btn) return;
+    const input = div_inputOf(btn);
+    sendMessage(btn.dataset.to, input.value.trim());
+    input.value = "";
+  });
+  grid.addEventListener("keydown", e => {
+    if (e.key !== "Enter") return;
+    const input = e.target.closest("input[data-to]");
+    if (!input) return;
+    sendMessage(input.dataset.to, input.value.trim());
+    input.value = "";
+  });
+  function div_inputOf(btn) {
+    return btn.parentElement.querySelector("input");
+  }
 
   // 日志：进页面拉一次全量，之后每 2s 轮询增量（简单可靠）
   let logCount = 0;

@@ -57,6 +57,14 @@ export function createServer(options: ServerOptions): http.Server {
     }
   }
   const pullQueues: Map<string, Task[]> = new Map();
+  // 节点信箱：人随时插话，对方 pull 时随任务一并带走
+  const mailboxes: Map<string, { text: string; from: string; at: string }[]> = new Map();
+
+  function dropMail(name: string): { text: string; from: string; at: string }[] {
+    const mail = mailboxes.get(name);
+    mailboxes.delete(name);
+    return mail ?? [];
+  }
 
   /** 领任务：队列有货立即出队，否则挂起等待；返回 null 表示超时空手 */
   async function pullTask(name: string, timeoutMs: number): Promise<Task | null> {
@@ -213,6 +221,16 @@ export function createServer(options: ServerOptions): http.Server {
       }
       case "presence/list":
         return { presences: registry.list() };
+      case "mailbox/send": {
+        const to = String(params?.to ?? "");
+        const text = String(params?.text ?? "");
+        if (!to || !text) throw { code: -32602, message: "缺少 to 或 text" };
+        if (!registry.find(to)) throw { code: -32602, message: "目标不在线或未知: " + to };
+        if (!mailboxes.has(to)) mailboxes.set(to, []);
+        mailboxes.get(to)!.push({ text, from: String(params?.from ?? remote), at: new Date().toISOString() });
+        log("[mail] -> " + to + ": " + text.slice(0, 50));
+        return { ok: true };
+      }
       case A2A_METHODS.TASK_GET:
         return { task: tasks.get(params?.id) ?? null };
       case A2A_METHODS.TASK_CANCEL: {
@@ -258,7 +276,7 @@ export function createServer(options: ServerOptions): http.Server {
       const timeoutMs = Math.min(Number(url.searchParams.get("timeout")) || PULL_TIMEOUT_MS, 55000);
       const task = await pullTask(name, timeoutMs);
       res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify({ task }));
+      res.end(JSON.stringify({ task, messages: dropMail(name) }));
       return;
     }
     if (req.method === "POST" && url.pathname === "/agent/result") {
@@ -353,7 +371,11 @@ const mcpDeps: McpFacadeDeps = {
     registry.heartbeat(card, null);
     return { ok: true, intervalMs: 10000 };
   },
-  pullTask: (name, ms) => pullTask(name, ms),
+  pullTask: async (name, ms) => {
+    const task = await pullTask(name, ms);
+    const mail = dropMail(name);
+    return { task, messages: mail };
+  },
   report: (taskId, state, text, artifacts) => reportResult(taskId, state, text, artifacts),
   sendTask: async (prompt, target) => {
     const r = await handleRpc("message/send", { prompt, target }, "mcp", new URL("http://mcp.local"), { localAddress: "127.0.0.1", localPort: options.port }) as { task: { id: string; state: string } };
@@ -361,6 +383,11 @@ const mcpDeps: McpFacadeDeps = {
   },
   getTask: id => tasks.get(id) ?? { error: "任务不存在: " + id },
   listAgents: () => registry.list(),
+  sendMail: (to, text, from) => {
+    if (!registry.find(to)) return { ok: false };
+    handleRpc("mailbox/send", { to, text, from }, "mcp", new URL("http://mcp.local"), { localAddress: "127.0.0.1", localPort: options.port });
+    return { ok: true };
+  },
   uploadFile: (name, dataBase64) => fileChannel.save(name, Buffer.from(dataBase64, "base64")),
   downloadFile: storedName => fileChannel.open(storedName)?.toString("base64"),
   log
