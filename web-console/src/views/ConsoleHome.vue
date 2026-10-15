@@ -2,12 +2,11 @@
 import { computed, onMounted, ref } from 'vue'
 import { Plus, Settings } from 'lucide-vue-next'
 import { useConsoleStore } from '@/stores/console'
-import { sendMail, dispatchTask, setNodeRole, saveRoles, savePmDoc } from '@/api/console'
+import { setNodeRole, saveRoles, savePmDoc } from '@/api/console'
 import CreateOrderDialog from '@/components/console/CreateOrderDialog.vue'
 import NodeCard from '@/components/console/NodeCard.vue'
 import OrderPanel from '@/components/console/OrderPanel.vue'
 import LogPanel from '@/components/console/LogPanel.vue'
-import FabPanel from '@/components/console/FabPanel.vue'
 import RolesDialog from '@/components/console/RolesDialog.vue'
 import RolePickDialog from '@/components/console/RolePickDialog.vue'
 import PmDialog from '@/components/console/PmDialog.vue'
@@ -32,7 +31,6 @@ const pmOpen = ref(false)
 const pickOpen = ref(false)
 const pickName = ref('')
 const pickCurrent = ref('')
-const fabOpen = ref(false)
 const sidebarCreateOpen = ref(false)
 
 function log(line: string) {
@@ -69,20 +67,6 @@ const activeTab = ref('active')
 
 function onCreateFromSidebar() {
   sidebarCreateOpen.value = true
-}
-
-function onSend(to: string, text: string, mode: 'mail' | 'task') {
-  if (mode === 'task') {
-    dispatchTask(to, text).then(r => {
-      if (r.error) log('[task] 派发失败: ' + r.error.message)
-      else log('[task] 已派发 -> ' + to + ': ' + text.slice(0, 80))
-    })
-  } else {
-    sendMail(to, text).then(r => {
-      if (r.error) log('[mail] 发送失败: ' + r.error.message)
-      else log('[mail] 我 -> ' + to + ': ' + text)
-    })
-  }
 }
 
 async function onPickRole(name: string, role: string) {
@@ -200,14 +184,6 @@ function onStatusChange(id: string, status: OrderStatus) {
           <LogPanel :logs="store.logs" class="min-h-[200px] flex-1" />
         </div>
       </main>
-    <!-- 右下角悬浮发送 -->
-    <div class="fixed bottom-6 right-6 z-40 flex flex-col items-end gap-3">
-      <FabPanel v-model:open="fabOpen" :presences="store.presences" @send="onSend" />
-      <Button class="h-12 w-12 rounded-full shadow-lg" title="发送留言 / 派发任务" @click="fabOpen = !fabOpen">
-        <img :src="'/console/logos/' + 'chat.svg'" alt="" class="h-5 w-5" />
-      </Button>
-    </div>
-
     <RolesDialog v-model:open="rolesOpen" :roles="store.roles" @save="onRolesSave" />
     <CreateOrderDialog
       v-model:open="sidebarCreateOpen"
