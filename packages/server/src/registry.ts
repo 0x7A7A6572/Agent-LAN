@@ -39,11 +39,12 @@ export class Registry {
     return this.agents.get(name);
   }
 
-  /** 执行中标记：领到任务置位，上报结果清除 */
-  setBusy(name: string, on: boolean): boolean {
+  /** 执行中标记：领到任务置位，上报结果清除；workingOn 为正在做的工单描述 */
+  setBusy(name: string, on: boolean, workingOn?: string): boolean {
     const p = this.agents.get(name);
     if (!p) return false;
     p.state = on ? "working" : "idle";
+    p.workingOn = on ? (workingOn ?? p.workingOn) : undefined;
     if (on) p.busySince = Date.now();
     p.lastSeen = new Date().toISOString();
     return true;

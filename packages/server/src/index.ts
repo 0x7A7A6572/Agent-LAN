@@ -81,7 +81,7 @@ export function createServer(options: ServerOptions): http.Server {
     const q = pullQueues.get(name);
     if (q?.length) {
       const task = q.shift()!;
-      registry.setBusy(name, true);
+      registry.setBusy(name, true, workingOnOf(task));
       log("-> task " + task.id.slice(0, 8) + " pulled by " + name);
       return task;
     }
@@ -102,7 +102,7 @@ export function createServer(options: ServerOptions): http.Server {
       timer.unref?.();
       const wake = (task: Task) => {
         clearTimeout(timer);
-        registry.setBusy(name, true);
+        registry.setBusy(name, true, workingOnOf(task));
         log("-> task " + task.id.slice(0, 8) + " pushed to " + name);
         finish(task);
       };
@@ -132,6 +132,16 @@ export function createServer(options: ServerOptions): http.Server {
     ?? path.join(path.resolve(options.filesDir ?? ".mac-files"), "..", ".orders.json"));
   const roleStore = new RoleStore(options.rolesPath
     ?? path.join(path.resolve(options.filesDir ?? ".mac-files"), "..", ".roles.json"));
+  // 领任务时给名册生成「正在做」摘要：优先工单号反查标题，普通任务截 prompt
+  const workingOnOf = (task: Task): string => {
+    const m = /\[工单 (ord-\w+)\]/.exec(task.prompt);
+    if (m) {
+      const o = orderStore.get(m[1]);
+      if (o) return o.id + " " + o.title;
+      return m[1];
+    }
+    return task.prompt.slice(0, 24) + (task.prompt.length > 24 ? "…" : "");
+  };
   // 名册快照附带 hub 侧角色：PM 与控制台的选人依据
   const withRoles = (list: AgentPresence[]) =>
     list.map(p => ({ ...p, role: roleStore.get(p.card.name) || undefined }));

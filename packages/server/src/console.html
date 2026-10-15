@@ -113,6 +113,10 @@
   #fabSend img { width: 18px; height: 18px; pointer-events: none; }
   #fabSend:hover { background: #6aa2ff; transform: scale(1.05); }
   #fabSend:disabled { opacity: .45; cursor: not-allowed; transform: none; }
+  .workingOn {
+    margin-top: 6px; font-size: 11px; color: #58a6ff;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
   .roleBtn {
     margin-top: 6px; font-size: 11px; cursor: pointer;
     background: transparent; color: #6e7681;
@@ -228,6 +232,7 @@
       "<span class='dot'></span>" + esc(p.card.name) +
       "<span class='badge'></span></h2>" +
       "<div class='meta'></div>" +
+      "<div class='workingOn' style='display:none'></div>" +
       "<button class='roleBtn' title='点击修改角色'>设角色</button>" +
       ''
       // `<div class='say'><input placeholder='留言插话…' data-to='" + esc(p.card.name) + "'><button data-to='" + esc(p.card.name) + "'>发送</button></div>`;
@@ -236,6 +241,7 @@
       badge: div.querySelector(".badge"),
       meta: div.querySelector(".meta"),
       role: div.querySelector(".roleBtn"),
+      workingOn: div.querySelector(".workingOn"),
       input: div.querySelector("input"),
       host: p.groupHost || p.card.host || p.card.url
     };
@@ -276,6 +282,10 @@
         c.role.classList.toggle("has", !!roleName);
       }
       c.role.onclick = () => pickRole(p.card.name, roleName);
+      // 执行中的工单摘要：蓝色显示，空闲隐藏
+      const won = (p.online && p.state === "working" && p.workingOn) ? "⚙ " + p.workingOn : "";
+      if (c.workingOn.textContent !== won) c.workingOn.textContent = won;
+      c.workingOn.style.display = won ? "" : "none";
       // 名册到达后同步两个节点下拉（工单视图可能先于首帧名册打开）
       if (view === "orders") fillOrderAssignees();
       // 分组容器（懒创建）
