@@ -7,11 +7,22 @@ const DEAD_AFTER_MS = 60000;
 export class Registry {
   private agents = new Map<string, AgentPresence>();
 
-  /** 心跳：注册或刷新某节点的在线时间 */
-  heartbeat(card: AgentCard): { reconnected: boolean } {
+  /** 心跳：注册或刷新某节点的在线时间；baseUrl 由连接来源推导 */
+  heartbeat(card: AgentCard, baseUrl?: string | null): { reconnected: boolean } {
     const existing = this.agents.get(card.name);
-    this.agents.set(card.name, { card, lastSeen: new Date().toISOString(), online: true });
+    this.agents.set(card.name, {
+      card,
+      lastSeen: new Date().toISOString(),
+      online: true,
+      baseUrl: baseUrl === null ? undefined : (baseUrl ?? existing?.baseUrl)
+    });
     return { reconnected: !existing?.online && !!existing };
+  }
+
+  /** 按名字查在线节点 */
+  find(name: string): AgentPresence | undefined {
+    this.sweep();
+    return this.agents.get(name);
   }
 
   /** 标记节点主动下线 */

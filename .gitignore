@@ -3,3 +3,4 @@ dist/
 *.log
 .research/logs/
 .env
+.mac-files/

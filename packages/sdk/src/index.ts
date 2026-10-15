@@ -67,4 +67,6 @@ export interface AgentPresence {
   card: AgentCard;
   lastSeen: string;
   online: boolean;
+  /** 心跳来源推算的对端根地址，如 http://192.168.1.2:9600 */
+  baseUrl?: string;
 }

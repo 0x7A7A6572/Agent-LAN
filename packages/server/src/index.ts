@@ -7,7 +7,10 @@ import { fileURLToPath } from "node:url";
 import type { AgentAdapter, AgentCard, Task, TaskState, InvokeEvent, AgentPresence } from "@mac/sdk";
 import { AGENT_CARD_PATH, A2A_METHODS } from "@mac/sdk";
 import { Registry } from "./registry.js";
+import { createRemoteProxy } from "./remote-proxy.js";
+import { FileChannel } from "./file-channel.js";
 export { createTui } from "./tui.js";
+export { createRemoteProxy } from "./remote-proxy.js";
 
 export interface ServerOptions {
   card: AgentCard;
@@ -17,6 +20,8 @@ export interface ServerOptions {
   selfRegister?: boolean;
   /** 多行日志回调，控制台 TUI 直接复用 */
   onLog?: (line: string) => void;
+  /** 文件通道存储目录，缺省 .mac-files */
+  filesDir?: string;
 }
 
 const terminalStates: ReadonlySet<TaskState> = new Set(["completed", "failed", "canceled"]);
@@ -33,6 +38,26 @@ export function createServer(options: ServerOptions): http.Server {
     if (logs.length > 200) logs.shift();
     options.onLog?.(stamped);
   };
+
+  // 入站客户端（workbuddy/dsh 等）长轮询领取的任务队列
+  const pullWaiters: Map<string, ((task: Task) => void)[]> = new Map();
+  const PULL_TIMEOUT_MS = 25000;
+
+  function enqueueFor(name: string, task: Task): void {
+    const waiters = pullWaiters.get(name);
+    if (waiters?.length) {
+      const w = waiters.shift()!;
+      w(task);
+    } else {
+      // 无人等：存入待领队列
+      let q = pullQueues.get(name);
+      if (!q) { q = []; pullQueues.set(name, q); }
+      q.push(task);
+    }
+  }
+  const pullQueues: Map<string, Task[]> = new Map();
+
+  const fileChannel = new FileChannel(options.filesDir ?? ".mac-files", "http://" + FileChannel.lanAddress() + ":" + options.port);
 
   if (options.selfRegister !== false) {
     registry.heartbeat(options.card);
@@ -68,14 +93,33 @@ export function createServer(options: ServerOptions): http.Server {
       updatedAt: now
     };
     tasks.set(task.id, task);
-    log("<- task " + task.id.slice(0, 8) + " from " + remote + ": " + prompt.slice(0, 60));
-    void driveTask(task);
-    return { task: { id: task.id, state: task.state } };
+
+    // target 指向其他节点 → 换用远端代理执行；不带 target → 本机 adapter
+    const target: string | undefined = params?.target;
+    let adapter = options.adapter;
+    if (target && target !== options.card.name) {
+      const presence = registry.find(target);
+      if (presence?.baseUrl) {
+        adapter = createRemoteProxy({ baseUrl: presence.baseUrl, targetName: target });
+        log("-> task " + task.id.slice(0, 8) + " forward to " + target + ": " + prompt.slice(0, 60));
+      } else if (presence) {
+        // 入站客户端：入队等它长轮询来领
+        enqueueFor(target, task);
+        log("-> task " + task.id.slice(0, 8) + " queued for " + target + ": " + prompt.slice(0, 60));
+        return { task: { id: task.id, state: "submitted", target } };
+      } else {
+        throw { code: -32602, message: "目标不在线或未知: " + target };
+      }
+    } else {
+      log("<- task " + task.id.slice(0, 8) + " from " + remote + ": " + prompt.slice(0, 60));
+    }
+    void driveTask(task, adapter);
+    return { task: { id: task.id, state: task.state, target: target ?? options.card.name } };
   }
 
-  async function driveTask(task: Task): Promise<void> {
+  async function driveTask(task: Task, adapter: AgentAdapter): Promise<void> {
     try {
-      for await (const ev of options.adapter.invoke(task)) {
+      for await (const ev of adapter.invoke(task)) {
         applyEvent(task, ev);
         pushEvent(task.id, ev);
         if (ev.kind === "status") log("[task] " + task.id.slice(0, 8) + " -> " + ev.status.state);
@@ -99,14 +143,20 @@ export function createServer(options: ServerOptions): http.Server {
     }
   }
 
-  async function handleRpc(method: string, params: any, remote: string): Promise<unknown> {
+  async function handleRpc(method: string, params: any, remote: string, url: URL, conn: { localAddress?: string; localPort?: number }): Promise<unknown> {
     switch (method) {
       case A2A_METHODS.MESSAGE_SEND:
         return handleMessageSend(params, remote);
       case "presence/heartbeat": {
         const card = params?.card as AgentCard;
         if (!card?.name) throw { code: -32602, message: "缺少 card.name" };
-        const { reconnected } = registry.heartbeat(card);
+        // inbound 客户端没有可直连地址，不记 baseUrl（走长轮询领取）
+        const baseUrl = params?.inbound ? null : (() => {
+          const port = conn.localPort ?? 0;
+          const addr = (conn.localAddress ?? "127.0.0.1").replace("::1", "127.0.0.1").replace("::ffff:", "");
+          return "http://" + addr + ":" + port;
+        })();
+        const { reconnected } = registry.heartbeat(card, baseUrl);
         if (reconnected) log("++ " + card.name + " reconnected (" + card.url + ")");
         else log("++ " + card.name + " connected (" + card.url + ")");
         pushPresence();
@@ -155,6 +205,71 @@ export function createServer(options: ServerOptions): http.Server {
       res.end(JSON.stringify(options.card));
       return;
     }
+    if (req.method === "GET" && url.pathname === "/agent/pull") {
+      const name = url.searchParams.get("name") ?? "";
+      const presence = registry.find(name);
+      if (!presence) { res.writeHead(404, { "content-type": "application/json" }); res.end(JSON.stringify({ error: "未注册: " + name })); return; }
+      const q = pullQueues.get(name);
+      if (q?.length) {
+        const task = q.shift()!;
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ task }));
+        log("-> task " + task.id.slice(0, 8) + " pulled by " + name);
+        return;
+      }
+      // 长轮询挂起：等 enqueueFor 唤醒或超时空手返回
+      const timeoutMs = Math.min(Number(url.searchParams.get("timeout")) || PULL_TIMEOUT_MS, 55000);
+      const timer = setTimeout(() => {
+        const waiters = pullWaiters.get(name) ?? [];
+        const i = waiters.indexOf(wake);
+        if (i >= 0) waiters.splice(i, 1);
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ task: null }));
+      }, timeoutMs);
+      timer.unref?.();
+      const wake = (task: Task) => {
+        clearTimeout(timer);
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ task }));
+        log("-> task " + task.id.slice(0, 8) + " pushed to " + name);
+      };
+      if (!pullWaiters.has(name)) pullWaiters.set(name, []);
+      pullWaiters.get(name)!.push(wake);
+      return;
+    }
+    if (req.method === "POST" && url.pathname === "/agent/result") {
+      let body = "";
+      for await (const chunk of req) body += chunk;
+      const { taskId, state, text, artifacts } = JSON.parse(body);
+      const t = tasks.get(taskId);
+      if (t) {
+        t.state = state ?? "completed";
+        t.updatedAt = new Date().toISOString();
+        if (text) pushEvent(taskId, { kind: "message", text });
+        for (const a of artifacts ?? []) { t.artifacts.push(a); pushEvent(taskId, { kind: "artifact", artifact: a }); }
+        pushEvent(taskId, { kind: "status", status: { state: t.state, timestamp: t.updatedAt } });
+        log("[task] " + taskId.slice(0, 8) + " -> " + t.state + " (by client)");
+      }
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ ok: !!t }));
+      return;
+    }
+    if (req.method === "GET" && url.pathname.startsWith("/files/")) {
+      const data = fileChannel.open(url.pathname.slice("/files/".length));
+      if (!data) { res.writeHead(404); res.end(); return; }
+      res.writeHead(200, { "content-type": "application/octet-stream" });
+      res.end(data);
+      return;
+    }
+    if (req.method === "PUT" && url.pathname.startsWith("/files/")) {
+      const chunks: Buffer[] = [];
+      for await (const chunk of req) chunks.push(chunk as Buffer);
+      const uri = fileChannel.save(url.pathname.slice("/files/".length) || "file.bin", Buffer.concat(chunks));
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ uri }));
+      log("[file] stored " + uri);
+      return;
+    }
     if (req.method === "GET" && url.pathname === "/console") {
       res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
       res.end(consoleHtml());
@@ -181,7 +296,10 @@ export function createServer(options: ServerOptions): http.Server {
       for await (const chunk of req) body += chunk;
       const rpc = JSON.parse(body);
       try {
-        const result = await handleRpc(rpc.method, rpc.params, remote);
+        const result = await handleRpc(rpc.method, rpc.params, remote, url, {
+          localAddress: req.socket.localAddress,
+          localPort: req.socket.localPort
+        });
         res.writeHead(200, { "content-type": "application/json" });
         res.end(JSON.stringify({ jsonrpc: "2.0", id: rpc.id, result }));
       } catch (err: any) {

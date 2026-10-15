@@ -50,3 +50,34 @@ MAC_AGENT_NAME=node-1 MAC_ADAPTER=claude MAC_PORT=9600 pnpm --filter @mac/app st
 - 15s 无心跳判离线，60s 无心跳移出名单
 - `presence/leave` 主动下线；`presence/list` 拉全量名册
 - 浏览器控制台走 `GET /console/presence/stream`（SSE）
+
+## 跨节点调用
+
+`message/send` 的 params 支持 `target`：
+
+- `target` = 在线节点名 → 本节点代理转发，远端执行，事件流原样回传
+- `target` = 入站客户端（workbuddy/dsh）→ 任务入队，客户端长轮询领取，结果上报回传
+- 不带 `target` → 本机 adapter 执行
+
+## 文件通道
+
+- `PUT /files/<name>` 上传，返回 `http://<局域网IP>:<port>/files/<id>-<name>`
+- `GET /files/<stored>` 取回；Artifact 只存 URI 不进消息体
+- 存储目录 `MAC_FILES_DIR`（默认 .mac-files）
+
+## 入站客户端（workbuddy / dsh 接入）
+
+```js
+import { AgentClient } from "@mac/client";
+
+new AgentClient({
+  serverUrl: "http://192.168.1.1:9600",
+  card: { name: "wb-echo", url: "inbound", version: "0.0.1",
+          capabilities: { streaming: true, adapters: ["echo"] } },
+  async *handler(task) {
+    yield { kind: "message", text: "echo: " + task.prompt };
+  }
+}).start();
+```
+
+完整示例见 `examples/echo-agent.mjs`。客户端机制：10s 心跳（inbound 标记）+ 长轮询领任务（/agent/pull）+ 结果上报（/agent/result）。

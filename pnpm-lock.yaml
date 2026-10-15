@@ -42,6 +42,12 @@ importers:
         specifier: workspace:*
         version: link:../server
 
+  packages/client:
+    dependencies:
+      '@mac/sdk':
+        specifier: workspace:*
+        version: link:../sdk
+
   packages/sdk: {}
 
   packages/server:
