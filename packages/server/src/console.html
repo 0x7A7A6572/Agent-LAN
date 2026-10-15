@@ -38,7 +38,7 @@
   }
   .host.online { border-color: #2ea043; }
   .group {
-    border: 1px solid #30363d; border-top: none; /* border-radius: 0 0 8px 8px; */
+    border: 1px solid #30363d; border-top: none; border-bottom: none;/* border-radius: 0 0 8px 8px; */
     padding: 8px 10px 10px 14px; margin-bottom: 2px;
    /*  border-left: 3px solid #30363d; */
   }
@@ -60,17 +60,92 @@
     font-size: 10px; padding: 1px 6px; border-radius: 10px;
     /* border: 1px solid #30363d; */ color: #8b949e; margin-left: auto;
   }
-  .say { display: flex; gap: 6px; margin-top: 8px; }
-  .say input {
-    flex: 1; background: #0d1117; border: 1px solid #30363d; border-radius: 6px;
-    color: #c9d1d9; font-size: 12px; padding: 4px 8px; outline: none;
+  /* 右下角悬浮按钮与弹出面板（codex 风格） */
+  #fabBtn {
+    position: fixed; right: 20px; bottom: 20px; z-index: 50;
+    width: 46px; height: 46px; border-radius: 50%; cursor: pointer;
+    background: #3fb950; border: 1px solid #3fb950; color: #fff;
+    font-size: 20px; line-height: 1; box-shadow: 0 4px 16px rgba(31,111,235,.4);
+    transition: transform .15s, background .15s;
   }
-  .say input:focus { border-color: #3fb950; }
-  .say button {
-    background: #21262d; border: 1px solid #30363d; border-radius: 6px;
-    color: #c9d1d9; font-size: 12px; padding: 4px 10px; cursor: pointer;
+  #fabBtn { display: flex; align-items: center; justify-content: center; }
+  #fabBtn img { width: 22px; height: 22px; pointer-events: none; }
+  #fabBtn:hover { transform: scale(1.08); background: #3fb950; }
+  #fabBtn.open { transform: rotate(45deg); }
+  /* codex 风格：整块画布 + 无边框控件 + 圆形发送键 */
+  #fabPanel {
+    position: fixed; right: 20px; bottom: 78px; z-index: 50;
+    width: 520px; max-width: calc(100vw - 40px);
+    background: #21262d; border: 1px solid #30363d;
+    border-radius: 20px; box-shadow: 0 12px 40px rgba(0,0,0,.55);
+    display: none; flex-direction: column; padding: 14px 16px 12px;
   }
-  .say button:hover { background: #30363d; }
+  #fabPanel.open { display: flex; }
+  #fabInput {
+    width: 100%; min-height: 56px; max-height: 220px; resize: none;
+    background: transparent; border: none; outline: none;
+    color: #e6edf3; font-size: 14px; line-height: 1.6;
+    font-family: inherit; padding: 2px 2px 10px;
+  }
+  #fabInput::placeholder { color: #8b949e; }
+  #fabPanel .fp-foot {
+    display: flex; align-items: center; gap: 4px;
+    font-size: 12px; color: #c9d1d9;
+  }
+  #fabTarget, #fabMode {
+    background: transparent; border: none; outline: none; cursor: pointer;
+    color: #e6edf3; font-size: 12px; padding: 4px 6px; border-radius: 8px;
+  }
+  #fabTarget:hover, #fabMode:hover { background: #30363d; }
+  #fabTarget option, #fabMode option { background: #21262d; color: #e6edf3; }
+  #fabSend {
+    margin-left: auto; width: 34px; height: 34px; border-radius: 50%;
+    background: #4a8dff; border: none; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: background .15s, transform .15s; flex: 0 0 auto;
+  }
+  #fabSend img { width: 18px; height: 18px; pointer-events: none; }
+  #fabSend:hover { background: #6aa2ff; transform: scale(1.05); }
+  #fabSend:disabled { opacity: .45; cursor: not-allowed; transform: none; }
+  .roleBtn {
+    margin-top: 6px; font-size: 11px; cursor: pointer;
+    background: transparent; color: #6e7681;
+    border: 1px dashed #30363d; border-radius: 10px; padding: 1px 10px;
+  }
+  .roleBtn.has { color: #58a6ff; border-style: solid; border-color: #1f6feb; }
+  .roleBtn:hover { border-color: #58a6ff; }
+  .viewTabs { display: flex; gap: 6px; margin-left: auto; }
+  .viewTabs button {
+    font-size: 12px; cursor: pointer; background: #21262d; color: #c9d1d9;
+    border: 1px solid #30363d; border-radius: 6px; padding: 3px 12px;
+  }
+  .viewTabs button.on { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+  #orderView { display: none; flex-direction: column; gap: 8px; overflow-y: auto; flex: 0 0 auto; max-height: 45vh; }
+  .orderCard {
+    background: #161b22; border: 1px solid #30363d; border-left: 3px solid #6e7681;
+    border-radius: 6px; padding: 8px 12px; display: flex; align-items: center; gap: 10px;
+  }
+  .orderCard.st-developing, .orderCard.st-analyzing { border-left-color: #1f6feb; }
+  .orderCard.st-testing, .orderCard.st-review { border-left-color: #d29922; }
+  .orderCard.st-done { border-left-color: #3fb950; opacity: .75; }
+  .orderCard.st-canceled { opacity: .5; }
+  .orderCard .oid { font-size: 11px; color: #6e7681; font-family: monospace; }
+  .orderCard .otitle { font-size: 13px; color: #e6edf3; flex: 1; }
+  .orderCard .oassignee { font-size: 11px; color: #8b949e; }
+  .orderCard .ostat { font-size: 11px; padding: 1px 8px; border-radius: 10px; border: 1px solid #30363d; color: #c9d1d9; }
+  .orderCard select, .orderCard button {
+    font-size: 11px; background: #21262d; color: #c9d1d9;
+    border: 1px solid #30363d; border-radius: 6px; padding: 2px 8px; cursor: pointer;
+  }
+  #orderNew { display: flex; gap: 6px; }
+  #orderNew input, #orderNew select {
+    background: #0d1117; border: 1px solid #30363d; border-radius: 6px;
+    color: #c9d1d9; font-size: 12px; padding: 5px 8px; outline: none;
+  }
+  #orderNew input { flex: 1; }
+  #orderNew button { background: #238636; border: none; border-radius: 6px; color: #fff; cursor: pointer; padding: 5px 14px; }
+  #orderDetail { display: none; background: #010409; border: 1px solid #30363d; border-radius: 8px; padding: 10px; font-size: 12px; color: #c9d1d9; white-space: pre-wrap; max-height: 30vh; overflow-y: auto; }
+
   #logbox {
     flex: 1; overflow-y: auto; background: #010409; border: 1px solid #30363d;
     border-radius: 8px; padding: 10px; font-size: 12px; line-height: 1.7;
@@ -80,9 +155,40 @@
 </head>
 <body>
   <h1> Multi-Agent-Connect  <button id="clearLogs">清空日志</button></h1>
-  <div id="summary">连接中…</div>
+  <div id="summary" style="display:flex;align-items:center;gap:12px;">
+    <span id="sumText">连接中…</span>
+    <span class="viewTabs">
+      <button id="tabAgents" class="on">节点</button>
+      <button id="tabOrders">工单</button>
+    </span>
+  </div>
+  <div id="orderView">
+    <div id="orderNew">
+      <input id="onTitle" placeholder="工单标题…">
+      <select id="onAssignee"><option value="">指派给…</option></select>
+      <select id="onPriority">
+        <option value="normal">普通</option><option value="high">高</option>
+        <option value="urgent">紧急</option><option value="low">低</option>
+      </select>
+      <button id="onCreate">建单派发</button>
+    </div>
+    <div id="orderList"></div>
+    <div id="orderDetail"></div>
+  </div>
   <div id="grid"></div>
   <div id="logbox"></div>
+  <button id="fabBtn" title="发送留言 / 派发任务"><img src="/console/logos/chat.svg" alt=""></button>
+  <div id="fabPanel">
+    <textarea id="fabInput" placeholder="输入内容…"></textarea>
+    <div class="fp-foot">
+      <select id="fabTarget"></select>
+      <select id="fabMode">
+        <option value="mail">留言</option>
+        <option value="task">派发任务</option>
+      </select>
+      <button id="fabSend" title="发送"><img src="/console/logos/up.svg" alt=""></button>
+    </div>
+  </div>
 <script>
   const grid = document.getElementById("grid");
   const summary = document.getElementById("summary");
@@ -114,12 +220,15 @@
       "<h2>" + (logo ? "<img class='logo' src='" + logo + "' alt=''>" : "") +
       "<span class='dot'></span>" + esc(p.card.name) +
       "<span class='badge'></span></h2>" +
-      "<div class='meta'></div>" + ''
+      "<div class='meta'></div>" +
+      "<button class='roleBtn' title='点击修改角色'>设角色</button>" +
+      ''
       // `<div class='say'><input placeholder='留言插话…' data-to='" + esc(p.card.name) + "'><button data-to='" + esc(p.card.name) + "'>发送</button></div>`;
     return {
       el: div,
       badge: div.querySelector(".badge"),
       meta: div.querySelector(".meta"),
+      role: div.querySelector(".roleBtn"),
       input: div.querySelector("input"),
       host: p.groupHost || p.card.host || p.card.url
     };
@@ -130,7 +239,7 @@
     const g = (p) => p.groupHost || p.card.host || p.card.url;
     const hosts = new Set(presences.map(g));
     const onlineHosts = new Set(presences.filter(p => p.online).map(g));
-    summary.textContent =
+    sumText.textContent =
       online.length + " 在线 / " + presences.length + " 节点 · " +
       onlineHosts.size + "/" + hosts.size + " 台主机 · 40s 无活动判离线";
 
@@ -151,6 +260,13 @@
         c.meta.dataset.raw = p.lastSeen + p.card.description;
         c.meta.innerHTML = meta;
       }
+      // 角色徽章：显示当前角色，点击弹出改选
+      const roleName = p.role || "";
+      if (c.role.textContent !== (roleName || "设角色")) {
+        c.role.textContent = roleName || "设角色";
+        c.role.classList.toggle("has", !!roleName);
+      }
+      c.role.onclick = () => pickRole(p.card.name, roleName);
       // 分组容器（懒创建）
       const host = g(p);
       let groupEl = document.getElementById("grp-" + CSS.escape(host)) || createGroup(host, p, anyOnOf(sorted, host));
@@ -204,7 +320,7 @@
   es.onmessage = e => {
     try { render(JSON.parse(e.data).presences || []); } catch {}
   };
-  es.onerror = () => { summary.textContent = "连接中断，重连中…"; };
+  es.onerror = () => { sumText.textContent = "连接中断，重连中…"; };
 
   async function sendMessage(to, text) {
     if (!text) return;
@@ -260,6 +376,185 @@
       await fetch("/console/logs/clear", { method: "POST" });
       logbox.replaceChildren();
     } catch {}
+  });
+
+  // ---------- 右下角悬浮发送面板 ----------
+  const fabBtn = document.getElementById("fabBtn");
+  const fabPanel = document.getElementById("fabPanel");
+  const fabTarget = document.getElementById("fabTarget");
+  const fabMode = document.getElementById("fabMode");
+  const fabInput = document.getElementById("fabInput");
+  const fabSend = document.getElementById("fabSend");
+
+  function fabToggle(open) {
+    const want = open ?? !fabPanel.classList.contains("open");
+    fabPanel.classList.toggle("open", want);
+    fabBtn.classList.toggle("open", want);
+    if (want) { fillFabTargets(); fabInput.focus(); }
+  }
+  fabBtn.addEventListener("click", () => fabToggle());
+  document.addEventListener("keydown", e => {
+    if (e.key === "Escape") fabToggle(false);
+  });
+
+  // 每次打开重建下拉；在线优先置顶
+  let fabTargetsBuilt = "";
+  function fillFabTargets() {
+    const list = [...cards.keys()].map(n => ({ name: n, online: cards.get(n).el.classList.contains("online") }));
+    list.sort((a, b) => (b.online - a.online) || a.name.localeCompare(b.name));
+    const sig = list.map(x => x.name + x.online).join("|");
+    if (sig === fabTargetsBuilt) return;
+    fabTargetsBuilt = sig;
+    const prev = fabTarget.value;
+    fabTarget.innerHTML = list.map(x =>
+      "<option value='" + esc(x.name) + "'>" + esc(x.name) + (x.online ? "" : "（离线）") + "</option>"
+    ).join("");
+    if ([...fabTarget.options].some(o => o.value === prev)) fabTarget.value = prev;
+  }
+
+  async function fabSubmit() {
+    const to = fabTarget.value;
+    const text = fabInput.value.trim();
+    if (!to) { appendLog("[fab] 还没有可选择的节点"); return; }
+    if (!text) return;
+    fabSend.disabled = true;
+    try {
+      if (fabMode.value === "task") {
+        const r = await fetch("/", {
+          method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ jsonrpc: "2.0", id: Date.now(), method: "message/send",
+            params: { prompt: text, target: to } })
+        }).then(r => r.json());
+        if (r.error) appendLog("[task] 派发失败: " + r.error.message);
+        else appendLog("[task] 已派发 -> " + to + ": " + text.slice(0, 80));
+      } else {
+        await sendMessage(to, text);
+      }
+      fabInput.value = "";
+      fabToggle(false);
+    } finally {
+      fabSend.disabled = false;
+    }
+  }
+  fabSend.addEventListener("click", fabSubmit);
+  fabInput.addEventListener("keydown", e => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); fabSubmit(); }
+  });
+
+  // ---------- 角色管理 ----------
+  const ROLES = ["requirement", "product", "frontend", "backend", "test", "pm", "docs"];
+  async function pickRole(name, current) {
+    const pick = prompt("设置 " + name + " 的角色：\n" + ROLES.join(" / ") + "\n留空清除", current || "");
+    if (pick === null) return;
+    const role = pick.trim().toLowerCase();
+    const r = await fetch("/console/roles", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name, role })
+    }).then(r => r.json());
+    if (r.ok) appendLog("[role] " + name + " -> " + (r.role || "（无）"));
+    else appendLog("[role] 修改失败: " + r.error);
+  }
+
+  // ---------- 视图切换 ----------
+  const orderView = document.getElementById("orderView");
+  const sumText = document.getElementById("sumText");
+  let view = "agents";
+  function setView(v) {
+    view = v;
+    document.getElementById("tabAgents").classList.toggle("on", v === "agents");
+    document.getElementById("tabOrders").classList.toggle("on", v === "orders");
+    grid.style.display = v === "agents" ? "" : "none";
+    orderView.style.display = v === "orders" ? "flex" : "none";
+    if (v === "orders") { refreshOrders(); fillFabTargets(); }
+  }
+  document.getElementById("tabAgents").addEventListener("click", () => setView("agents"));
+  document.getElementById("tabOrders").addEventListener("click", () => setView("orders"));
+  // summary.textContent 的调用改为只写 sumText
+  const origSummary = summary;
+  window.__sumText = sumText;
+
+  // ---------- 工单看板 ----------
+  const orderListEl = document.getElementById("orderList");
+  const orderDetailEl = document.getElementById("orderDetail");
+  const STATUSES = ["backlog", "analyzing", "developing", "testing", "review", "done", "canceled"];
+  function fillOrderAssignees() {
+    const sel = document.getElementById("onAssignee");
+    const prev = sel.value;
+    sel.innerHTML = "<option value=''>指派给…</option>" +
+      [...cards.keys()].sort().map(n => "<option value='" + esc(n) + "'>" + esc(n) + "</option>").join("");
+    if ([...sel.options].some(o => o.value === prev)) sel.value = prev;
+  }
+  async function refreshOrders() {
+    try {
+      const r = await fetch("/console/orders").then(r => r.json());
+      const orders = (r.orders || []).filter(o => !o.parent);
+      renderOrders(orders);
+    } catch {}
+  }
+  function renderOrders(orders) {
+    orderListEl.replaceChildren(...orders.map(o => {
+      const div = document.createElement("div");
+      div.className = "orderCard st-" + o.status;
+      const sel = document.createElement("select");
+      STATUSES.forEach(s => {
+        const op = document.createElement("option");
+        op.value = s; op.textContent = s;
+        if (s === o.status) op.selected = true;
+        sel.appendChild(op);
+      });
+      sel.onchange = () => orderUpdate(o.id, { status: sel.value });
+      const kids = document.createElement("span");
+      kids.className = "oassignee";
+      kids.textContent = (o.assignee ? "👤" + o.assignee : "未指派") + " · 截止 " + (o.dueDate || "—");
+      div.append(
+        Object.assign(document.createElement("span"), { className: "oid", textContent: o.id }),
+        Object.assign(document.createElement("span"), { className: "otitle", textContent: o.title + "（" + o.priority + "）", onclick: () => showOrder(o.id) }),
+        kids,
+        sel
+      );
+      return div;
+    }));
+    if (!orders.length) orderListEl.innerHTML = "<div style='color:#6e7681;font-size:12px'>还没有工单</div>";
+  }
+  async function showOrder(id) {
+    const r = await fetch("/console/orders/" + id).then(r => r.json());
+    if (r.error) { orderDetailEl.textContent = r.error; orderDetailEl.style.display = "block"; return; }
+    const o = r.order;
+    const lines = [
+      "【" + o.id + "】" + o.title,
+      "状态: " + o.status + " · 优先级: " + o.priority + " · 处理人: " + (o.assignee || "未指派"),
+      "描述: " + (o.description || "—"),
+      "来源: " + o.source + " · 创建: " + o.createdAt.slice(0, 16) + " · 截止: " + (o.dueDate || "—"),
+      "子单: " + (r.children.length ? r.children.map(c => c.id + " " + c.title + " (" + c.status + ")").join("; ") : "无"),
+      "附件: " + (o.attachments.length ? o.attachments.map(a => a.name).join(", ") : "无"),
+      "—— 流转记录 ——",
+      ...o.timeline.map(e => e.at.slice(11, 19) + " " + e.by + ": " + e.field + (e.to ? " → " + e.to : "") + (e.note ? " [" + e.note + "]" : ""))
+    ];
+    orderDetailEl.textContent = lines.join("\n");
+    orderDetailEl.style.display = "block";
+  }
+  async function orderUpdate(id, patch) {
+    const r = await fetch("/console/orders/" + id + "/update", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify(patch)
+    }).then(r => r.json());
+    if (r.error) appendLog("[order] 更新失败: " + r.error);
+    refreshOrders();
+    if (orderDetailEl.style.display === "block") showOrder(id);
+  }
+  document.getElementById("onCreate").addEventListener("click", async () => {
+    const title = document.getElementById("onTitle").value.trim();
+    if (!title) return;
+    const assignee = document.getElementById("onAssignee").value;
+    const priority = document.getElementById("onPriority").value;
+    const r = await fetch("/console/orders", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ title, assignee: assignee || undefined, priority })
+    }).then(r => r.json());
+    if (r.error) { appendLog("[order] 建单失败: " + r.error); return; }
+    appendLog("[order] 已建 " + r.order.id + " " + title + (assignee ? " 并派发 -> " + assignee : ""));
+    document.getElementById("onTitle").value = "";
+    refreshOrders();
   });
 
   pollLogs();

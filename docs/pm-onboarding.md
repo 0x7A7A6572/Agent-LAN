@@ -31,7 +31,8 @@
 ## 约定
 
 - 每次推进都在 update 时写清楚 note，timeline 是唯一的流转事实。
-- 节点能力标签约定：requirement/product/frontend/backend/test/pm/docs。
+- 节点角色由人在控制台维护（点节点卡片上的角色徽章即可修改，改完立即生效，
+  节点无需重连），mac_list_agents 里每个节点带 role 字段，按它选人。
 - 母单 attachments 只放最终验收物，中间产物一律挂子单。
 - 不确定的事问人：mac_send_message to=human 不存在，
   直接在 mac_report 的 text 里写「需人工决策：<问题>」。

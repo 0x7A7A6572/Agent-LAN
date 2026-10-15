@@ -10,6 +10,7 @@ import { Registry } from "./registry.js";
 import { createRemoteProxy } from "./remote-proxy.js";
 import { FileChannel } from "./file-channel.js";
 import { OrderStore } from "./orders.js";
+import { RoleStore } from "./roles.js";
 import { mcpHandle, type McpFacadeDeps } from "./mcp-facade.js";
 export { createTui } from "./tui.js";
 export { createRemoteProxy } from "./remote-proxy.js";
@@ -26,6 +27,8 @@ export interface ServerOptions {
   filesDir?: string;
   /** 工单落盘文件，缺省 filesDir 同级 .orders.json */
   ordersPath?: string;
+  /** 角色映射落盘文件，缺省 filesDir 同级 .roles.json */
+  rolesPath?: string;
   /** debug 日志（心跳/check_in 刷屏类）是否显示，默认否 */
   debugLogs?: boolean;
 }
@@ -125,6 +128,11 @@ export function createServer(options: ServerOptions): http.Server {
   const fileChannel = new FileChannel(options.filesDir ?? ".mac-files", "http://" + FileChannel.lanAddress() + ":" + options.port);
   const orderStore = new OrderStore(options.ordersPath
     ?? path.join(path.resolve(options.filesDir ?? ".mac-files"), "..", ".orders.json"));
+  const roleStore = new RoleStore(options.rolesPath
+    ?? path.join(path.resolve(options.filesDir ?? ".mac-files"), "..", ".roles.json"));
+  // 名册快照附带 hub 侧角色：PM 与控制台的选人依据
+  const withRoles = (list: AgentPresence[]) =>
+    list.map(p => ({ ...p, role: roleStore.get(p.card.name) || undefined }));
   // 落盘是防抖的：退出前同步 flush，防尾写丢失
   const flushOrders = () => orderStore.flushNow();
   process.on("exit", flushOrders);
@@ -144,7 +152,7 @@ export function createServer(options: ServerOptions): http.Server {
   }
 
   function pushPresence(): void {
-    const payload = "data: " + JSON.stringify({ presences: registry.list() }) + "\n\n";
+    const payload = "data: " + JSON.stringify({ presences: withRoles(registry.list()) }) + "\n\n";
     for (const res of presenceSubs) res.write(payload);
   }
 
@@ -244,7 +252,7 @@ export function createServer(options: ServerOptions): http.Server {
         return { ok };
       }
       case "presence/list":
-        return { presences: registry.list() };
+        return { presences: withRoles(registry.list()) };
       case "mailbox/send": {
         const to = String(params?.to ?? "");
         const text = String(params?.text ?? "");
@@ -394,7 +402,7 @@ export function createServer(options: ServerOptions): http.Server {
         "cache-control": "no-cache",
         connection: "keep-alive"
       });
-      res.write("data: " + JSON.stringify({ presences: registry.list() }) + "\n\n");
+      res.write("data: " + JSON.stringify({ presences: withRoles(registry.list()) }) + "\n\n");
       presenceSubs.add(res);
       req.on("close", () => presenceSubs.delete(res));
       return;
@@ -409,6 +417,87 @@ export function createServer(options: ServerOptions): http.Server {
       res.writeHead(200, { "content-type": "application/json", connection: "close" });
       res.end(JSON.stringify({ ok: true }));
       log("[console] 日志已清空");
+      return;
+    }
+    if (req.method === "GET" && url.pathname === "/console/roles") {
+      res.writeHead(200, { "content-type": "application/json", connection: "close" });
+      res.end(JSON.stringify({ roles: roleStore.all() }));
+      return;
+    }
+    if (req.method === "POST" && url.pathname === "/console/roles") {
+      let body = "";
+      for await (const chunk of req) body += chunk;
+      const { name, role } = JSON.parse(body);
+      try {
+        roleStore.set(String(name), String(role ?? ""));
+        log("[role] " + name + " -> " + (role || "（无）"));
+        res.writeHead(200, { "content-type": "application/json", connection: "close" });
+        res.end(JSON.stringify({ ok: true, role: roleStore.get(String(name)) }));
+      } catch (err: any) {
+        res.writeHead(200, { "content-type": "application/json", connection: "close" });
+        res.end(JSON.stringify({ ok: false, error: String(err?.message ?? err) }));
+      }
+      return;
+    }
+    // 工单 REST：控制台专用转发（与 mac_order_* 同一 OrderStore）
+    if (req.method === "GET" && url.pathname === "/console/orders") {
+      const q = url.searchParams;
+      const list = orderStore.list({
+        status: q.get("status") ?? undefined,
+        assignee: q.get("assignee") ?? undefined,
+        tag: q.get("tag") ?? undefined,
+        parent: q.get("parent") ?? undefined,
+        priority: q.get("priority") ?? undefined
+      });
+      res.writeHead(200, { "content-type": "application/json", connection: "close" });
+      res.end(JSON.stringify({ orders: list }));
+      return;
+    }
+    if (req.method === "GET" && url.pathname.startsWith("/console/orders/")) {
+      const id = url.pathname.slice("/console/orders/".length);
+      const o = orderStore.get(id);
+      res.writeHead(200, { "content-type": "application/json", connection: "close" });
+      res.end(JSON.stringify(o ? { order: o, children: orderStore.children(id) } : { error: "工单不存在: " + id }));
+      return;
+    }
+    if (req.method === "POST" && url.pathname === "/console/orders") {
+      let body = "";
+      for await (const chunk of req) body += chunk;
+      const b = JSON.parse(body);
+      try {
+        const o = orderStore.create({ ...b, source: b.source ?? "human-console" }, "human-console");
+        log("[order] created " + o.id + " " + o.title + (o.assignee ? " -> " + o.assignee : ""));
+        // 建单时指名 assignee 则自动派发通知
+        if (o.assignee && registry.find(o.assignee)) {
+          enqueueFor(o.assignee, {
+            id: randomUUID(), state: "submitted",
+            prompt: "[工单 " + o.id + "] " + o.title + "\n" + o.description,
+            artifacts: [], createdAt: o.createdAt, updatedAt: o.updatedAt
+          });
+          log("-> order " + o.id + " dispatched to " + o.assignee);
+        }
+        res.writeHead(200, { "content-type": "application/json", connection: "close" });
+        res.end(JSON.stringify({ order: o }));
+      } catch (err: any) {
+        res.writeHead(200, { "content-type": "application/json", connection: "close" });
+        res.end(JSON.stringify({ error: String(err?.message ?? err) }));
+      }
+      return;
+    }
+    if ((req.method === "POST") && url.pathname.startsWith("/console/orders/") && url.pathname.endsWith("/update")) {
+      const id = url.pathname.slice("/console/orders/".length, -"/update".length);
+      let body = "";
+      for await (const chunk of req) body += chunk;
+      const b = JSON.parse(body);
+      try {
+        const o = orderStore.update(id, b, "human-console");
+        log("[order] " + id + " -> " + o.status + (o.assignee ? " (" + o.assignee + ")" : ""));
+        res.writeHead(200, { "content-type": "application/json", connection: "close" });
+        res.end(JSON.stringify({ order: o }));
+      } catch (err: any) {
+        res.writeHead(200, { "content-type": "application/json", connection: "close" });
+        res.end(JSON.stringify({ error: String(err?.message ?? err) }));
+      }
       return;
     }
     if (url.pathname === "/mcp") {
@@ -492,7 +581,7 @@ const mcpDeps: McpFacadeDeps = {
     return { taskId: r.task.id, state: r.task.state };
   },
   getTask: id => tasks.get(id) ?? { error: "任务不存在: " + id },
-  listAgents: () => registry.list(),
+  listAgents: () => withRoles(registry.list()),
   touch: name => registry.touch(name),
   sendMail: (to, text, from) => {
     if (!registry.find(to)) return { ok: false };
