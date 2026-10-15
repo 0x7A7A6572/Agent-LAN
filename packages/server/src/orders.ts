@@ -11,10 +11,19 @@ export class OrderStore {
   private saveTimer?: NodeJS.Timeout;
 
   constructor(private filePath: string) {
+    let raw: Order[];
     try {
-      const raw = JSON.parse(fs.readFileSync(filePath, "utf8")) as Order[];
-      for (const o of raw) this.orders.set(o.id, o);
-    } catch { /* 首次启动无文件 */ }
+      raw = JSON.parse(fs.readFileSync(filePath, "utf8")) as Order[];
+    } catch (err: any) {
+      if (err?.code !== "ENOENT") {
+        // 数据损坏：改名备份后空库启动，绝不用内存覆盖坏文件
+        const backup = filePath + ".corrupt-" + Date.now();
+        try { fs.renameSync(filePath, backup); } catch { /* 备份失败仍空库启动 */ }
+        console.error("[orders] 工单文件损坏，已备份为 " + backup + "，以空库启动");
+      }
+      return;
+    }
+    for (const o of raw) this.orders.set(o.id, o);
   }
 
   private save(): void {
@@ -92,9 +101,11 @@ export class OrderStore {
       }
       if (this.hasCycle(id, patch.blockedBy)) throw new Error("blockedBy 成环");
     }
+    // 同调用先改 blockedBy 再推进 status 时，用生效值校验防绕过
+    const effBlockedBy = patch.blockedBy ?? o.blockedBy;
     const leavingBacklog = patch.status && patch.status !== "backlog" && o.status === "backlog";
     if (leavingBacklog && !patch.force) {
-      const undone = o.blockedBy.filter(b => this.orders.get(b)?.status !== "done");
+      const undone = effBlockedBy.filter(b => this.orders.get(b)?.status !== "done");
       if (undone.length) throw new Error("依赖未完成: " + undone.join(",") + "（force=true 可强制）");
     }
     const now = new Date().toISOString();
@@ -115,6 +126,9 @@ export class OrderStore {
     track("description", patch.description ?? o.description);
     track("tags", patch.tags ?? o.tags);
     track("blockedBy", patch.blockedBy ?? o.blockedBy);
+    if (patch.note) {
+      events.push({ at: now, by, field: "note", to: patch.note });
+    }
     if (events.length) {
       o.updatedAt = now;
       o.timeline.push(...events);

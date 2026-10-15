@@ -196,7 +196,8 @@ const TOOLS = [
         dueDate: { type: "string" },
         description: { type: "string" },
         blockedBy: { type: "array", items: { type: "string" } },
-        force: { type: "boolean", description: "绕过依赖等待，环检测仍生效" }
+        force: { type: "boolean", description: "绕过依赖等待，环检测仍生效" },
+        note: { type: "string", description: "变更说明，写入流转记录" }
       },
       required: ["id"]
     }
@@ -229,6 +230,12 @@ const TOOLS = [
     }
   }
 ];
+
+// spec：参数错回 -32602，其余内部错误 -32000
+const PARAM_ERROR_MARKS = ["缺少", "不存在", "非法", "成环", "不能依赖", "依赖未完成"];
+function orderErrorCode(msg: string): number {
+  return PARAM_ERROR_MARKS.some(m => msg.includes(m)) ? -32602 : -32000;
+}
 
 function toolResult(data: unknown): unknown {
   return {
@@ -368,7 +375,7 @@ export async function mcpHandle(raw: string, req: http.IncomingMessage, res: htt
           case "mac_order_create": {
             try {
               const o = deps.orderCreate({
-                title: String(a.title), description: a.description ? String(a.description) : undefined,
+                title: a.title == null ? "" : String(a.title), description: a.description ? String(a.description) : undefined,
                 priority: a.priority as any, tags: a.tags, assignee: a.assignee ? String(a.assignee) : undefined,
                 owner: a.owner ? String(a.owner) : undefined, startDate: a.startDate, dueDate: a.dueDate,
                 parent: a.parent ? String(a.parent) : undefined,
@@ -377,7 +384,7 @@ export async function mcpHandle(raw: string, req: http.IncomingMessage, res: htt
               }, String(a.by ?? "mcp"));
               reply(toolResult(o));
             } catch (err: any) {
-              replyError(-32000, String(err?.message ?? err));
+              replyError(orderErrorCode(String(err?.message ?? err)), String(err?.message ?? err));
             }
             return;
           }
@@ -396,11 +403,12 @@ export async function mcpHandle(raw: string, req: http.IncomingMessage, res: htt
                 startDate: a.startDate, dueDate: a.dueDate,
                 description: a.description ? String(a.description) : undefined,
                 blockedBy: Array.isArray(a.blockedBy) ? a.blockedBy.map(String) : undefined,
-                force: Boolean(a.force)
+                force: Boolean(a.force),
+                note: a.note ? String(a.note) : undefined
               }, String(a.by ?? "mcp"));
               reply(toolResult(o));
             } catch (err: any) {
-              replyError(-32000, String(err?.message ?? err));
+              replyError(orderErrorCode(String(err?.message ?? err)), String(err?.message ?? err));
             }
             return;
           }
@@ -419,7 +427,7 @@ export async function mcpHandle(raw: string, req: http.IncomingMessage, res: htt
               const ref = deps.orderAttach(String(a.id), String(a.name), String(a.contentBase64), String(a.by ?? "mcp"));
               reply(toolResult(ref));
             } catch (err: any) {
-              replyError(-32000, String(err?.message ?? err));
+              replyError(orderErrorCode(String(err?.message ?? err)), String(err?.message ?? err));
             }
             return;
           }

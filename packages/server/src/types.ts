@@ -23,4 +23,5 @@ export interface OrderUpdateInput {
   status?: string; priority?: Order["priority"]; tags?: string[];
   assignee?: string; owner?: string; startDate?: string; dueDate?: string;
   description?: string; blockedBy?: string[]; force?: boolean;
+  note?: string;
 }
