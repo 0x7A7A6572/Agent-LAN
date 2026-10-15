@@ -1,0 +1,18 @@
+{
+  "name": "multi-agent-connect",
+  "private": true,
+  "version": "0.0.1",
+  "description": "LAN 内多 agent 互调服务：A2A 跨机器层 + 本机 adapter",
+  "scripts": {
+    "build": "pnpm -r build",
+    "dev": "pnpm -r --parallel dev",
+    "typecheck": "pnpm -r typecheck"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "typescript": "^7.0.2"
+  }
+}

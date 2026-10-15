@@ -1,0 +1,17 @@
+{
+  "name": "@mac/app",
+  "version": "0.0.1",
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/main.js",
+    "dev": "node --watch dist/main.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@mac/sdk": "workspace:*",
+    "@mac/server": "workspace:*",
+    "@mac/adapter-claude": "workspace:*",
+    "@mac/adapter-codex": "workspace:*"
+  }
+}

@@ -1,0 +1,1 @@
+let d=""; process.stdin.on("data",c=>d+=c); process.stdin.on("end",()=>{ process.stdout.write("fake-agent got: "+d.trim()); });

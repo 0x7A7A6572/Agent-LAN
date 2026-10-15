@@ -1,0 +1,25 @@
+{
+  "name": "@mac/adapter-claude",
+  "version": "0.0.1",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsc -p tsconfig.json --watch",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@mac/sdk": "workspace:*"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./acp-bridge": {
+      "types": "./dist/acp-bridge.d.ts",
+      "import": "./dist/acp-bridge.js"
+    }
+  }
+}
