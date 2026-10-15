@@ -75,6 +75,7 @@ export class OrderStore {
   update(id: string, patch: OrderUpdateInput, by: string): Order {
     const o = this.orders.get(id);
     if (!o) throw new Error("工单不存在: " + id);
+    if (patch.priority && !PRIORITIES.includes(patch.priority)) throw new Error("priority 非法: " + patch.priority);
     if (patch.blockedBy) {
       for (const b of patch.blockedBy) {
         if (b === id) throw new Error("不能依赖自己");
