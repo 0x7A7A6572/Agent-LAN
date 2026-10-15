@@ -75,7 +75,35 @@
   const logbox = document.getElementById("logbox");
   let lastCount = -1;
 
+  // 正在输入的留言：重绘不丢
+  function snapshotInputs() {
+    const snap = { values: {}, focused: null, caret: null };
+    grid.querySelectorAll("input[data-to]").forEach(inp => {
+      snap.values[inp.dataset.to] = inp.value;
+      if (document.activeElement === inp) {
+        snap.focused = inp.dataset.to;
+        snap.caret = inp.selectionStart;
+      }
+    });
+    return snap;
+  }
+  function restoreInputs(snap) {
+    if (!snap) return;
+    grid.querySelectorAll("input[data-to]").forEach(inp => {
+      const v = snap.values[inp.dataset.to];
+      if (v) inp.value = v;
+    });
+    if (snap.focused) {
+      const inp = grid.querySelector('input[data-to="' + CSS.escape(snap.focused) + '"]');
+      if (inp) {
+        inp.focus();
+        if (snap.caret !== null) try { inp.setSelectionRange(snap.caret, snap.caret); } catch {}
+      }
+    }
+  }
+
   function render(presences) {
+    const snap = snapshotInputs();
     const online = presences.filter(p => p.online);
     const hosts = new Set(presences.map(p => p.card.host || p.card.url));
     const onlineHosts = new Set(presences.filter(p => p.online).map(p => p.card.host || p.card.url));
@@ -110,6 +138,7 @@
         grid.appendChild(div);
       }
     }
+    restoreInputs(snap);
   }
 
   function esc(s) {
