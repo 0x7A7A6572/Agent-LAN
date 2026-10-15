@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
+import { SplitterGroup, SplitterPanel, SplitterResizeHandle } from 'reka-ui'
 import { ChevronsDownUp, ChevronsUpDown, Eraser, ScrollText, Users, FileText } from 'lucide-vue-next'
 import { useConsoleStore } from '@/stores/console'
 import { useAppStore } from '@/stores/app'
@@ -106,38 +107,48 @@ async function onOrderCreate(body: { title: string; assignee?: string; priority:
       </span>
     </div>
 
-    <!-- 控制台主体：默认收起，点开才渲染 -->
-    <template v-if="app.consoleExpanded">
-      <!-- 工单区：移到首页，树形查看 -->
-      <section class="rounded-md border border-border bg-card/40 p-2.5">
-        <div class="mb-2 flex items-center gap-2">
-          <h2 class="text-[13px] font-semibold text-foreground">工单</h2>
-          <Badge variant="outline">{{ store.orders.length }}</Badge>
+    <!-- 可拉调主布局：上=控制台区（可整体收起），下=日志区，中间拖拽分割 -->
+    <SplitterGroup direction="vertical" class="min-h-0 flex-1">
+      <SplitterPanel :min-size="20" class="flex min-h-0 flex-col">
+        <!-- 控制台主体：默认收起，点开才渲染 -->
+        <template v-if="app.consoleExpanded">
+          <!-- 工单区：移到首页，树形查看 -->
+          <section class="rounded-md border border-border bg-card/40 p-2.5">
+            <div class="mb-2 flex items-center gap-2">
+              <h2 class="text-[13px] font-semibold text-foreground">工单</h2>
+              <Badge variant="outline">{{ store.orders.length }}</Badge>
+            </div>
+            <OrderPanel
+              ref="orderPanel"
+              :orders="store.orders"
+              :node-names="store.nodeNames"
+              @create="onOrderCreate"
+              @status-change="(id, s) => store.updateOrderStatus(id, s)"
+            />
+          </section>
+
+          <!-- 节点名册：按主机分组 -->
+          <NodeGrid :presences="store.presences" class="mt-2.5" @pick-role="onPickRole" />
+        </template>
+
+        <!-- 收起时的引导条 -->
+        <div
+          v-else
+          class="flex flex-1 cursor-pointer items-center justify-center rounded-md border border-dashed border-border text-xs text-muted-foreground hover:border-blue-600/50 hover:text-blue-400"
+          @click="app.toggleConsole(true)"
+        >
+          控制台已收起，点击展开（节点名册 + 工单）
         </div>
-        <OrderPanel
-          ref="orderPanel"
-          :orders="store.orders"
-          :node-names="store.nodeNames"
-          @create="onOrderCreate"
-          @status-change="(id, s) => store.updateOrderStatus(id, s)"
-        />
-      </section>
+      </SplitterPanel>
 
-      <!-- 节点名册：按主机分组 -->
-      <NodeGrid :presences="store.presences" @pick-role="onPickRole" />
-    </template>
-
-    <!-- 收起时的引导条 -->
-    <div
-      v-else
-      class="flex cursor-pointer items-center justify-center rounded-md border border-dashed border-border py-8 text-xs text-muted-foreground hover:border-blue-600/50 hover:text-blue-400"
-      @click="app.toggleConsole(true)"
-    >
-      控制台已收起，点击展开（节点名册 + 工单）
-    </div>
-
-    <!-- 日志：常驻底部 -->
-    <LogPanel v-if="app.showLogs" :logs="store.logs" class="min-h-[80px]" />
+      <!-- 日志面板：关闭时不渲染，分割条随之消失 -->
+      <template v-if="app.showLogs">
+        <SplitterResizeHandle class="group relative h-1.5 rounded-sm bg-transparent transition-colors hover:bg-blue-600/40 data-[state=drag]:bg-blue-600/60" />
+        <SplitterPanel :min-size="10" :default-size="25" class="flex min-h-0 flex-col">
+          <LogPanel :logs="store.logs" />
+        </SplitterPanel>
+      </template>
+    </SplitterGroup>
 
     <!-- 右下角悬浮发送 -->
     <div class="fixed bottom-5 right-5 z-40 flex flex-col items-end gap-3">

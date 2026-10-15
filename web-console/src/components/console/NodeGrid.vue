@@ -3,7 +3,7 @@ import { computed } from 'vue'
 import NodeCard from './NodeCard.vue'
 import type { Presence } from '@/types/console'
 
-const props = defineProps<{ presences: Presence[] }>()
+const props = defineProps<{ presences: Presence[]; class?: string }>()
 defineEmits<{ (e: 'pick-role', name: string, role: string): void }>()
 
 const groupOf = (p: Presence) => p.groupHost || p.card.host || p.card.url
@@ -24,7 +24,7 @@ const groups = computed(() => {
 </script>
 
 <template>
-  <div class="flex flex-col gap-4 overflow-y-auto">
+  <div class="flex flex-col gap-4 overflow-y-auto" :class="props.class">
     <div v-for="g in groups" :key="g.host" class="flex flex-col">
       <div
         class="flex items-center gap-2 rounded-t-md border border-b-0 px-3 py-2"
