@@ -296,6 +296,12 @@ export function createServer(options: ServerOptions): http.Server {
     return fs.readFileSync(tpl, "utf8");
   }
 
+  // PM 提示词：与 docs/pm-onboarding.md 同源，构建时拷贝
+  function pmMd(): string {
+    const tpl = path.join(path.dirname(fileURLToPath(import.meta.url)), "pm.md");
+    return fs.readFileSync(tpl, "utf8");
+  }
+
   const httpServer = http.createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
     const remote = remoteOf(req);
@@ -371,6 +377,11 @@ export function createServer(options: ServerOptions): http.Server {
     if (req.method === "GET" && url.pathname === "/mcp/install.md") {
       res.writeHead(200, { "content-type": "text/markdown; charset=utf-8" });
       res.end(installMd());
+      return;
+    }
+    if (req.method === "GET" && url.pathname === "/mcp/pm.md") {
+      res.writeHead(200, { "content-type": "text/markdown; charset=utf-8" });
+      res.end(pmMd());
       return;
     }
     if (req.method === "GET" && url.pathname === "/console/presence/stream") {

@@ -109,3 +109,8 @@ MCP 配置注册在会话级/项目级即可，端点无状态，所有实例共
 - 浏览器打开 http://localhost:<port>/console，每个节点卡片底部有留言输入框，
   打字回车即送达对方 agent 的下一轮 pull。
 - 也可以在任何 agent 里让它调 mac_send_message 代为转达。
+## 四、编排角色（AI 工厂模式）
+
+把某个节点设为 PM（编排者）：它读 http://<主服务IP>/mcp/pm.md 按说明书工作，
+用 mac_order_* 系列工具拆单、派发、推进流水线，其他节点照常接活上报。
+PM 的接入方式与普通节点完全相同（先跑 probe.sh 体检，再下载 worker.sh）。
