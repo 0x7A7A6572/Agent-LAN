@@ -1,9 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useConsoleStore } from '@/stores/console'
-import { useAppStore } from '@/stores/app'
 import { sendMail, dispatchTask, setNodeRole, saveRoles, savePmDoc, clearLogs } from '@/api/console'
-import AppSidebar from '@/components/console/AppSidebar.vue'
 import CreateOrderDialog from '@/components/console/CreateOrderDialog.vue'
 import NodeCard from '@/components/console/NodeCard.vue'
 import OrderPanel from '@/components/console/OrderPanel.vue'
@@ -15,12 +13,10 @@ import PmDialog from '@/components/console/PmDialog.vue'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { SidebarInset, SidebarProvider, SidebarTrigger } from '@/components/ui/sidebar'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import type { OrderStatus } from '@/types/console'
 
 const store = useConsoleStore()
-const app = useAppStore()
 
 const rolesOpen = ref(false)
 const pmOpen = ref(false)
@@ -119,17 +115,21 @@ function onStatusChange(id: string, status: OrderStatus) {
 </script>
 
 <template>
-  <SidebarProvider>
-    <AppSidebar @create-order="onCreateFromSidebar" />
-
-    <SidebarInset>
-      <!-- 顶栏：折叠 + 标题 + 摘要 -->
-      <header class="flex h-14 shrink-0 items-center gap-3 border-b px-4">
-        <SidebarTrigger class="-ml-1" />
-        <span class="text-sm font-medium">Documents</span>
-        <span class="text-xs text-muted-foreground">{{ store.summary }}</span>
-        <Button variant="ghost" size="sm" class="ml-auto" @click="clearLogs(); store.logs = []">清空日志</Button>
-      </header>
+  <div class="flex min-h-screen w-full flex-col">
+    <!-- 顶栏：品牌 + 创建工单CTA + 标题 + 摘要 -->
+    <header class="sticky top-0 z-40 flex h-14 shrink-0 items-center gap-4 border-b bg-background px-4 md:px-6">
+      <div class="flex items-center gap-3">
+        <span class="flex size-6 items-center justify-center rounded-full border-2 border-foreground" />
+        <span class="hidden text-sm font-semibold sm:inline">Acme Inc.</span>
+        <Button size="sm" @click="onCreateFromSidebar">
+          <Plus class="h-4 w-4" />
+          创建工单
+        </Button>
+      </div>
+      <span class="text-sm font-medium">Documents</span>
+      <span class="hidden text-xs text-muted-foreground lg:inline">{{ store.summary }}</span>
+      <Button variant="ghost" size="sm" class="ml-auto" @click="clearLogs(); store.logs = []">清空日志</Button>
+    </header>
 
       <main class="flex flex-1 flex-col gap-4 p-4 md:gap-6 md:p-6">
         <!-- 节点卡行：横向滚动，截图同款 -->
@@ -179,8 +179,6 @@ function onStatusChange(id: string, status: OrderStatus) {
           <LogPanel :logs="store.logs" class="min-h-[200px] flex-1" />
         </div>
       </main>
-    </SidebarInset>
-
     <!-- 右下角悬浮发送 -->
     <div class="fixed bottom-6 right-6 z-40 flex flex-col items-end gap-3">
       <FabPanel v-model:open="fabOpen" :presences="store.presences" @send="onSend" />
@@ -197,5 +195,5 @@ function onStatusChange(id: string, status: OrderStatus) {
     />
     <PmDialog v-model:open="pmOpen" @save="onPmSave" />
     <RolePickDialog v-model:open="pickOpen" :roles="store.roles" :node-name="pickName" :current="pickCurrent" @pick="onPickConfirm" />
-  </SidebarProvider>
+  </div>
 </template>
