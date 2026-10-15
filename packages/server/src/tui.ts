@@ -1,4 +1,4 @@
-// 终端状态台：单行覆盖刷新，显示在线节点与最近事件
+// 终端状态台：事件驱动增量刷新，仅名册变化时重绘，日志不打扰画面
 import type { AgentPresence } from "@mac/sdk";
 
 export interface TuiState {
@@ -15,9 +15,19 @@ const RESET = "\x1b[0m";
 
 export function createTui(state: TuiState): (line?: string) => void {
   let lastLine = "";
+  // 名册指纹：内容没变就不重绘，消除定时刷屏
+  let lastSig = "";
+
   const render = () => {
     const presences = state.getPresences();
     const online = presences.filter(p => p.online);
+    // 指纹不含 lastSeen：心跳时间每单都变，会引起无意义重绘
+    const sig =
+      presences.map(p => [p.card.name, p.online, p.state ?? "", p.workingOn ?? ""].join("|")).join(";") +
+      "#" + lastLine;
+    if (sig === lastSig) return;
+    lastSig = sig;
+
     const rows: string[] = [];
     rows.push(CLEAR);
     rows.push("multi-agent-connect · " + state.selfName + " · :" + state.port);
@@ -49,11 +59,15 @@ export function createTui(state: TuiState): (line?: string) => void {
     if (lastLine) rows.push(DIM + lastLine + RESET);
     process.stdout.write(rows.join("\n") + "\n");
   };
-  // 每 3s 重绘（节点离线/上线由事件与 sweep 驱动，轮询兜底）
+
+  // 仅名册指纹变化时重绘；心跳 lastSeen 变化会触发，其余安静
   const timer = setInterval(render, 3000);
   timer.unref?.();
   return (line) => {
-    if (line) lastLine = line;
-    render();
+    // 日志行只更新底部单行，不触发整屏重绘；下次名册变化时一并带出
+    if (line) {
+      lastLine = line;
+      render();
+    }
   };
 }

@@ -33,15 +33,21 @@ const card: AgentCard = {
 
 let tui: ((line?: string) => void) | undefined;
 const presences: AgentPresence[] = [];
-// TUI 需要名册快照：server 不直接暴露 registry，用 onLog 触发重绘 + presence/list 轮询
+let lastPresenceSig = "";
+let lastLineCache: string | undefined;
+// TUI 名册快照：轮询 presence/list，指纹变化才重绘；日志不再触发刷屏
 async function pollPresence() {
   try {
     const r = await fetch("http://127.0.0.1:" + port + "/", {
       method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ jsonrpc: "2.0", id: 0, method: "presence/list" })
     }).then(r => r.json());
+    const next = r.result?.presences ?? [];
+    const sig = next.map((p: AgentPresence) => [p.card.name, p.online, p.state ?? "", p.workingOn ?? ""].join("|")).join(";");
+    if (sig === lastPresenceSig) return;
+    lastPresenceSig = sig;
     presences.length = 0;
-    presences.push(...(r.result?.presences ?? []));
+    presences.push(...next);
     tui?.();
   } catch {}
 }
@@ -51,10 +57,11 @@ createServer({
   // hub 是基础设施不是 agent，不进名册；给它派活省略 target 即本机执行
   selfRegister: false,
   debugLogs: process.env.MAC_DEBUG_LOGS === "1",
-  onLog: line => { tui?.(line); }
+  // 日志只写底部单行缓存，不触发 TUI 重绘（消刷屏）
+  onLog: line => { lastLineCache = line; }
 }).listen(port, async () => {
   tui = createTui({ selfName: agentName, port, getPresences: () => presences });
   setInterval(pollPresence, 3000);
   await pollPresence();
-  tui("控制台: http://localhost:" + port + "/console");
+  tui(lastLineCache ?? "控制台: http://localhost:" + port + "/console");
 });
