@@ -47,25 +47,22 @@ onMounted(() => {
   store.refreshOrders()
 })
 
-// 工单状态 Tab：按状态分组计数
-const statusTabs = computed(() => {
-  const active = store.orders.filter(o => !['done', 'canceled'].includes(o.status))
-  const done = store.orders.filter(o => o.status === 'done')
-  const others = store.orders.filter(o => o.status === 'canceled')
-  return [
-    { key: 'active', label: '工单状态', count: active.length },
-    { key: 'done', label: '已完成', count: done.length },
-    { key: 'all', label: '全部', count: store.orders.length },
-  ]
-})
-const tabOrders = computed(() => {
-  switch (activeTab.value) {
-    case 'done': return store.orders.filter(o => o.status === 'done')
-    case 'all': return store.orders
-    default: return store.orders.filter(o => !['done', 'canceled'].includes(o.status))
-  }
-})
-const activeTab = ref('active')
+// 工单状态 Tab：按生命周期状态分组，首个为全部
+const ORDER_STATUSES = ['backlog', 'analyzing', 'developing', 'testing', 'review', 'done', 'canceled'] as const
+const statusTabs = computed(() => [
+  { key: 'all', label: '全部', count: store.orders.length },
+  ...ORDER_STATUSES.map(s => ({
+    key: s,
+    label: s,
+    count: store.orders.filter(o => o.status === s).length,
+  })),
+])
+const tabOrders = computed(() =>
+  activeTab.value === 'all'
+    ? store.orders
+    : store.orders.filter(o => o.status === activeTab.value),
+)
+const activeTab = ref('all')
 
 function onCreateFromSidebar() {
   sidebarCreateOpen.value = true
@@ -115,7 +112,7 @@ function onStatusChange(id: string, status: OrderStatus) {
     <header class="sticky top-0 z-40 flex h-14 shrink-0 items-center gap-4 border-b bg-background px-4 md:px-6">
       <div class="flex items-center gap-3">
         <span class="flex size-6 items-center justify-center rounded-full border-2 border-foreground" />
-        <span class="hidden text-sm font-semibold sm:inline">Multi-Agent-LAN.</span>
+        <span class="hidden text-sm font-semibold sm:inline">Agent-LAN.</span>
       </div>
       <!-- <span class="text-sm font-medium">Documents</span> -->
       <span class="hidden text-xs text-muted-foreground lg:inline">{{ store.summary }}</span>
