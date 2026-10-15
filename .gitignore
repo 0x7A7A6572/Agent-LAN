@@ -4,3 +4,7 @@ dist/
 .research/logs/
 .env
 .mac-files/
+
+# 运行时数据
+.roles.json
+.orders.json
