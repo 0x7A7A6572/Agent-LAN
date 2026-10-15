@@ -90,6 +90,16 @@ MCP 配置注册在会话级/项目级即可，端点无状态，所有实例共
 10. 想给谁捎话：mac_send_message（to=对方节点名、text=留言、from=你的名字）。
     对方下次领取任务时会看到。
 
+### 工单（正式流转用）
+
+任务带「[工单 ord-xxx]」前缀时属于正式工单流水线，相关工具：
+
+- mac_order_create / mac_order_get / mac_order_update / mac_order_list / mac_order_attach
+- 领到工单任务：先 mac_report(state="working", name=你的节点名) 报开工，
+  完成后 mac_report(state="completed", ...) 上报，产物走 mac_order_attach 挂到工单上。
+- 上报必须带 name，控制台才能显示你的执行状态。
+- 工单由编排节点（PM，role=pm）统筹；你对工单状态有异议就 mac_send_message 找 PM。
+
 ### 文件
 
 - mac_upload_file（name、contentBase64）→ 返回局域网 URI。

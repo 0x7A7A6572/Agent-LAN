@@ -81,6 +81,8 @@ export function createServer(options: ServerOptions): http.Server {
     const q = pullQueues.get(name);
     if (q?.length) {
       const task = q.shift()!;
+      task.state = "working";
+      task.updatedAt = new Date().toISOString();
       registry.setBusy(name, true, workingOnOf(task));
       log("-> task " + task.id.slice(0, 8) + " pulled by " + name);
       return task;
@@ -102,6 +104,8 @@ export function createServer(options: ServerOptions): http.Server {
       timer.unref?.();
       const wake = (task: Task) => {
         clearTimeout(timer);
+        task.state = "working";
+        task.updatedAt = new Date().toISOString();
         registry.setBusy(name, true, workingOnOf(task));
         log("-> task " + task.id.slice(0, 8) + " pushed to " + name);
         finish(task);
@@ -167,6 +171,23 @@ export function createServer(options: ServerOptions): http.Server {
     const payload = "data: " + JSON.stringify({ presences: withRoles(registry.list()) }) + "\n\n";
     for (const res of presenceSubs) res.write(payload);
   }
+
+  // 每 5s 扫任务回执：领取后 30 分钟无终态 → failed（超时未回执），防任务无声丢失
+  const TASK_RECEIPT_TIMEOUT_MS = 1800000;
+  const receiptTimer = setInterval(() => {
+    const now = Date.now();
+    for (const t of tasks.values()) {
+      if (t.state !== "working") continue;
+      const age = now - new Date(t.updatedAt).getTime();
+      if (age > TASK_RECEIPT_TIMEOUT_MS) {
+        t.state = "failed";
+        t.updatedAt = new Date().toISOString();
+        pushEvent(t.id, { kind: "status", status: { state: "failed", message: "超时未回执", timestamp: t.updatedAt } });
+        log("[task] " + t.id.slice(0, 8) + " -> failed: 超时未回执");
+      }
+    }
+  }, 60000);
+  receiptTimer.unref?.();
 
   // 每 5s 推一次全量名册（兜底刷新，掉线判定靠 sweep）
   const presenceTimer = setInterval(() => pushPresence(), 5000);

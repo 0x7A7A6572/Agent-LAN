@@ -96,7 +96,7 @@ else: print('EMPTY')
       log "[✓] 心跳正常，已轮询 ${OK} 次"
     fi
   elif [ "$KIND" = "TASK" ] || [ "$KIND" = "MSG" ]; then
-    log "===== 命中 $KIND ====="
+    log "===== 命中 $KIND（上报结果时务必带 name=$NAME，完成后才能解除执行中状态） ====="
     echo "$OUT"
     exit 0
   fi
