@@ -1,8 +1,22 @@
 <script setup lang="ts">
-import type { AcceptableValue } from 'reka-ui'
-import { ChevronDown, ChevronRight, User } from 'lucide-vue-next'
+import { ChevronDown, ChevronRight, Ellipsis, GripVertical, User } from 'lucide-vue-next'
 import { Badge } from '@/components/ui/badge'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table'
 import type { Order, OrderStatus } from '@/types/console'
 
 const props = defineProps<{
@@ -38,56 +52,130 @@ function toggle(id: string) {
 </script>
 
 <template>
-  <div class="flex flex-col">
-    <template v-for="order in orders" :key="order.id">
-      <div class="flex items-center gap-3 rounded-lg px-1 py-1.5 transition-colors hover:bg-accent/50">
-        <button
-          v-if="hasChildren(order.id)"
-          class="shrink-0 text-muted-foreground hover:text-foreground"
-          @click="toggle(order.id)"
-        >
-          <ChevronDown v-if="expanded[order.id]" class="h-4 w-4" />
-          <ChevronRight v-else class="h-4 w-4" />
-        </button>
-        <span v-else class="w-4 shrink-0" />
-        <span class="hidden shrink-0 font-mono text-xs text-muted-foreground sm:inline">{{ order.id }}</span>
-        <span class="min-w-0 flex-1 cursor-pointer truncate text-sm font-medium hover:underline" @click="emit('select', order.id)">
-          {{ order.title }}
-          <Badge variant="outline" class="ml-1.5 text-[10px]">{{ order.priority }}</Badge>
-        </span>
-        <span class="hidden shrink-0 items-center gap-1 text-xs text-muted-foreground md:flex">
-          <User class="h-3.5 w-3.5" />
-          {{ order.assignee ?? '未指派' }} · 截止 {{ order.dueDate || '—' }}
-        </span>
-        <Badge :variant="statusVariant[order.status]" class="shrink-0 text-[10px]">{{ order.status }}</Badge>
-        <Select
-          :model-value="order.status"
-          @update:model-value="(v: AcceptableValue) => emit('status-change', order.id, String(v) as OrderStatus)"
-        >
-          <SelectTrigger class="h-7 w-[110px] shrink-0 text-xs"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem v-for="s in STATUSES" :key="s" :value="s" class="text-xs">{{ s }}</SelectItem>
-          </SelectContent>
-        </Select>
-      </div>
-      <!-- 子订单：递归缩进 -->
-      <div v-if="expanded[order.id] && hasChildren(order.id)" class="ml-8 flex flex-col gap-0.5 border-l py-1 pl-3">
-        <OrderTree
-          :orders="childrenOf(order.id)"
-          :all-orders="allOrders"
-          v-model:expanded="expanded"
-          @select="id => emit('select', id)"
-          @status-change="(id, s) => emit('status-change', id, s)"
-          @create-child="o => emit('create-child', o)"
-        />
-      </div>
-      <button
-        v-if="!order.parent"
-        class="mb-1 ml-8 w-fit rounded-md border border-dashed px-2 py-0.5 text-[11px] text-muted-foreground hover:border-blue-500 hover:text-blue-500"
-        @click="emit('create-child', order)"
-      >
-        + 子工单
-      </button>
-    </template>
-  </div>
+  <Table>
+    <TableHeader>
+      <TableRow>
+        <TableHead class="w-10" />
+        <TableHead class="w-10" />
+        <TableHead>标题</TableHead>
+        <TableHead class="w-[110px]">工单类型</TableHead>
+        <TableHead class="w-[120px]">状态</TableHead>
+        <TableHead class="w-[140px]">处理人 / 截止</TableHead>
+        <TableHead class="w-[110px]">流转</TableHead>
+        <TableHead class="w-12" />
+      </TableRow>
+    </TableHeader>
+    <TableBody>
+      <template v-for="order in orders" :key="order.id">
+        <TableRow class="group">
+          <TableCell class="text-muted-foreground/50">
+            <GripVertical class="h-4 w-4 opacity-0 transition-opacity group-hover:opacity-100" />
+          </TableCell>
+          <TableCell>
+            <button v-if="hasChildren(order.id)" class="text-muted-foreground hover:text-foreground" @click="toggle(order.id)">
+              <ChevronDown v-if="expanded[order.id]" class="h-4 w-4" />
+              <ChevronRight v-else class="h-4 w-4" />
+            </button>
+            <Checkbox v-else :model-value="order.status === 'done'" @click="emit('status-change', order.id, order.status === 'done' ? 'backlog' : 'done')" />
+          </TableCell>
+          <TableCell>
+            <button class="flex items-center gap-1.5 text-left text-sm font-medium hover:underline" @click="emit('select', order.id)">
+              <ChevronRight v-if="hasChildren(order.id) && !expanded[order.id]" class="h-3 w-3 text-muted-foreground" />
+              {{ order.title }}
+            </button>
+            <span class="font-mono text-[10px] text-muted-foreground">{{ order.id }}</span>
+          </TableCell>
+          <TableCell>
+            <Badge variant="outline" class="text-[11px]">{{ order.priority }}</Badge>
+          </TableCell>
+          <TableCell>
+            <span class="flex items-center gap-1.5 text-sm">
+              <span
+                class="flex size-4 items-center justify-center rounded-full"
+                :class="order.status === 'done' ? 'bg-green-600' : order.status === 'canceled' ? 'bg-destructive' : 'border border-muted-foreground/40'"
+              >
+                <svg v-if="order.status === 'done'" class="size-3 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6 9 17l-5-5" /></svg>
+              </span>
+              {{ order.status }}
+            </span>
+          </TableCell>
+          <TableCell>
+            <span class="flex items-center gap-1.5 text-sm text-muted-foreground">
+              <User class="h-3.5 w-3.5" />
+              {{ order.assignee ?? '未指派' }}
+              <span class="text-xs">· {{ order.dueDate || '—' }}</span>
+            </span>
+          </TableCell>
+          <TableCell>
+            <select
+              class="h-7 rounded-md border bg-transparent px-1.5 text-xs text-foreground"
+              :value="order.status"
+              @change="emit('status-change', order.id, ($event.target as HTMLSelectElement).value as OrderStatus)"
+            >
+              <option v-for="s in STATUSES" :key="s" :value="s">{{ s }}</option>
+            </select>
+          </TableCell>
+          <TableCell>
+            <DropdownMenu>
+              <DropdownMenuTrigger as-child>
+                <Button variant="ghost" size="icon" class="h-7 w-7">
+                  <Ellipsis class="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem @click="emit('select', order.id)">查看详情</DropdownMenuItem>
+                <DropdownMenuItem v-if="!order.parent" @click="emit('create-child', order)">添加子工单</DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </TableCell>
+        </TableRow>
+        <!-- 子工单：缩进行 -->
+        <TableRow v-for="child in childrenOf(order.id)" :key="child.id" class="bg-muted/30">
+          <TableCell class="text-muted-foreground/50">
+            <GripVertical class="h-4 w-4 opacity-0 transition-opacity group-hover:opacity-100" />
+          </TableCell>
+          <TableCell>
+            <Checkbox :model-value="child.status === 'done'" @click="emit('status-change', child.id, child.status === 'done' ? 'backlog' : 'done')" />
+          </TableCell>
+          <TableCell class="pl-8">
+            <span class="text-sm">{{ child.title }}</span>
+            <span class="ml-2 font-mono text-[10px] text-muted-foreground">{{ child.id }}</span>
+          </TableCell>
+          <TableCell>
+            <Badge variant="outline" class="text-[11px]">{{ child.priority }}</Badge>
+          </TableCell>
+          <TableCell>
+            <span class="flex items-center gap-1.5 text-sm">
+              <span
+                class="flex size-4 items-center justify-center rounded-full"
+                :class="child.status === 'done' ? 'bg-green-600' : 'border border-muted-foreground/40'"
+              >
+                <svg v-if="child.status === 'done'" class="size-3 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6 9 17l-5-5" /></svg>
+              </span>
+              {{ child.status }}
+            </span>
+          </TableCell>
+          <TableCell>
+            <span class="flex items-center gap-1.5 text-sm text-muted-foreground">
+              <User class="h-3.5 w-3.5" />
+              {{ child.assignee ?? '未指派' }}
+            </span>
+          </TableCell>
+          <TableCell>
+            <select
+              class="h-7 rounded-md border bg-transparent px-1.5 text-xs text-foreground"
+              :value="child.status"
+              @change="emit('status-change', child.id, ($event.target as HTMLSelectElement).value as OrderStatus)"
+            >
+              <option v-for="s in STATUSES" :key="s" :value="s">{{ s }}</option>
+            </select>
+          </TableCell>
+          <TableCell />
+        </TableRow>
+      </template>
+      <TableRow v-if="!orders.length">
+        <TableCell colspan="8" class="h-24 text-center text-muted-foreground">还没有工单</TableCell>
+      </TableRow>
+    </TableBody>
+  </Table>
 </template>
