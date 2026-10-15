@@ -1,7 +1,5 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { Plus } from 'lucide-vue-next'
-import { Button } from '@/components/ui/button'
 import {
   Dialog,
   DialogContent,
@@ -59,14 +57,6 @@ defineExpose({ showDetail })
 
 <template>
   <div class="flex flex-col gap-3">
-    <!-- 工具行：建单入口收进按钮+弹窗 -->
-    <div class="flex items-center gap-2">
-      <Button size="sm" class="h-8" @click="childParent = null; createOpen = true">
-        <Plus class="h-4 w-4" />
-        创建工单
-      </Button>
-    </div>
-
     <!-- 树形表 -->
     <div class="rounded-lg border">
       <OrderTree

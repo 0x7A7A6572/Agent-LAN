@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { Plus } from 'lucide-vue-next'
 import { useConsoleStore } from '@/stores/console'
 import { useAppStore } from '@/stores/app'
 import { sendMail, dispatchTask, setNodeRole, saveRoles, savePmDoc, clearLogs } from '@/api/console'
@@ -156,11 +155,7 @@ function onStatusChange(id: string, status: OrderStatus) {
                   <Badge variant="outline" class="text-[10px]">{{ t.count }}</Badge>
                 </TabsTrigger>
               </TabsList>
-              <Button size="sm" class="ml-auto" @click="sidebarCreateOpen = true">
-                <Plus class="h-4 w-4" />
-                创建工单
-              </Button>
-              <Button variant="outline" size="sm" @click="rolesOpen = true">角色库</Button>
+              <Button variant="outline" size="sm" class="ml-auto" @click="rolesOpen = true">角色库</Button>
               <Button variant="outline" size="sm" @click="pmOpen = true">PM 说明书</Button>
             </div>
             <TabsContent v-for="t in statusTabs" :key="t.key" :value="t.key">
