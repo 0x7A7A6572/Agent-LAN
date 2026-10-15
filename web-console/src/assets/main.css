@@ -1,0 +1,33 @@
+@import 'tailwindcss';
+@import 'tailwind-animations';
+
+/* 暗色主题令牌：对齐原控制台 github-dark 配色 */
+@theme {
+  --color-background: #0d1117;
+  --color-foreground: #c9d1d9;
+  --color-card: #161b22;
+  --color-card-foreground: #e6edf3;
+  --color-popover: #21262d;
+  --color-primary: #1f6feb;
+  --color-primary-foreground: #f7fbff;
+  --color-secondary: #21262d;
+  --color-secondary-foreground: #c9d1d9;
+  --color-muted: #21262d;
+  --color-muted-foreground: #8b949e;
+  --color-accent: #30363d;
+  --color-accent-foreground: #e6edf3;
+  --color-destructive: #da3633;
+  --color-destructive-foreground: #fff;
+  --color-border: #30363d;
+  --color-input: #0d1117;
+  --color-ring: #1f6feb;
+}
+
+body {
+  background: var(--color-background);
+  font-family:
+    Consolas,
+    'Microsoft YaHei',
+    system-ui,
+    monospace;
+}
