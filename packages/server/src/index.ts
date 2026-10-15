@@ -317,11 +317,14 @@ export function createServer(options: ServerOptions): http.Server {
     return req.socket.remoteAddress ?? "unknown";
   }
 
-  // ---------- 控制台页面：实时名册 + 日志 ----------
+  // ---------- 控制台页面：web-console SPA 构建产物 ----------
   function consoleHtml(): string {
-    const tpl = path.join(path.dirname(fileURLToPath(import.meta.url)), "console.html");
+    const tpl = path.join(path.dirname(fileURLToPath(import.meta.url)), "web", "index.html");
     return fs.readFileSync(tpl, "utf8");
   }
+
+  // web 构建产物根（assets/logos 等静态资源）
+  const webRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), "web");
 
   // 官方接入脚本：节点一条命令下载，规则统一由服务端维护
   function workerScript(): string {
@@ -399,13 +402,20 @@ export function createServer(options: ServerOptions): http.Server {
       res.end(consoleHtml());
       return;
     }
-    if (req.method === "GET" && url.pathname.startsWith("/console/logos/")) {
-      const name = path.basename(url.pathname.slice("/console/logos/".length));
-      const file = path.join(path.dirname(fileURLToPath(import.meta.url)), "logos", name);
-      if (!fs.existsSync(file)) { res.writeHead(404); res.end(); return; }
-      const ext = path.extname(name).toLowerCase();
-      const type = ext === ".svg" ? "image/svg+xml" : ext === ".png" ? "image/png" : "application/octet-stream";
-      res.writeHead(200, { "content-type": type, "cache-control": "max-age=86400" });
+    // SPA 静态资源：/assets/* 与 /console/logos/*（logos 兼容旧控制台路径）
+    const MIME: Record<string, string> = {
+      ".js": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml",
+      ".png": "image/png", ".ico": "image/x-icon", ".html": "text/html; charset=utf-8",
+    };
+    const staticPrefixes = ["/assets/", "/console/logos/"];
+    if (req.method === "GET" && staticPrefixes.some(pre => url.pathname.startsWith(pre))) {
+      const rel = url.pathname.startsWith("/assets/")
+        ? url.pathname.slice(1)
+        : "logos/" + path.basename(url.pathname);
+      const file = path.join(webRoot, rel);
+      if (!fs.existsSync(file) || !fs.statSync(file).isFile()) { res.writeHead(404); res.end(); return; }
+      const type = MIME[path.extname(file).toLowerCase()] ?? "application/octet-stream";
+      res.writeHead(200, { "content-type": type, "cache-control": url.pathname.startsWith("/assets/") ? "max-age=604800" : "max-age=86400" });
       res.end(fs.readFileSync(file));
       return;
     }
