@@ -112,8 +112,9 @@
   function render(presences) {
     const snap = snapshotInputs();
     const online = presences.filter(p => p.online);
-    const hosts = new Set(presences.map(p => p.card.host || p.card.url));
-    const onlineHosts = new Set(presences.filter(p => p.online).map(p => p.card.host || p.card.url));
+    const g = (p) => p.groupHost || p.card.host || p.card.url;
+    const hosts = new Set(presences.map(g));
+    const onlineHosts = new Set(presences.filter(p => p.online).map(g));
     summary.textContent =
       online.length + " 在线 / " + presences.length + " 节点 · " +
       onlineHosts.size + "/" + hosts.size + " 台主机 · 每 10s 心跳";
@@ -121,7 +122,7 @@
     // 按主机分组：主机头 + 组内 agent 卡片
     const groups = new Map();
     for (const p of presences) {
-      const h = p.card.host || p.card.url;
+      const h = p.groupHost || p.card.host || p.card.url;
       if (!groups.has(h)) groups.set(h, []);
       groups.get(h).push(p);
     }

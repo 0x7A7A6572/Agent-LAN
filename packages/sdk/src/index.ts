@@ -71,4 +71,6 @@ export interface AgentPresence {
   online: boolean;
   /** 心跳来源推算的对端根地址，如 http://192.168.1.2:9600 */
   baseUrl?: string;
+  /** 分组用主机标识：卡片 host > 来源 IP > url 兜底（服务端算好） */
+  groupHost: string;
 }

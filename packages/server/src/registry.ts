@@ -7,14 +7,17 @@ const DEAD_AFTER_MS = 300000;
 export class Registry {
   private agents = new Map<string, AgentPresence>();
 
-  /** 心跳：注册或刷新某节点的在线时间；baseUrl 由连接来源推导 */
-  heartbeat(card: AgentCard, baseUrl?: string | null): { reconnected: boolean } {
+  /** 心跳：注册或刷新在线；sourceIp 用于 inbound 节点的自动分组 */
+  heartbeat(card: AgentCard, baseUrl?: string | null, sourceIp?: string): { reconnected: boolean } {
     const existing = this.agents.get(card.name);
+    // 分组键：卡片自报 host > inbound 的来源 IP > url
+    const groupHost = card.host ?? (card.url === "inbound" && sourceIp ? sourceIp : card.url);
     this.agents.set(card.name, {
       card,
       lastSeen: new Date().toISOString(),
       online: true,
-      baseUrl: baseUrl === null ? undefined : (baseUrl ?? existing?.baseUrl)
+      baseUrl: baseUrl === null ? undefined : (baseUrl ?? existing?.baseUrl),
+      groupHost
     });
     return { reconnected: !existing?.online && !!existing };
   }

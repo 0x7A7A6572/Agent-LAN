@@ -4,8 +4,8 @@ import { randomUUID } from "node:crypto";
 import type { AgentCard } from "@mac/sdk";
 
 export interface McpFacadeDeps {
-  /** 注册自己（心跳） */
-  checkIn: (card: AgentCard) => { ok: boolean; intervalMs: number };
+  /** 注册自己（心跳）；sourceIp 用于 inbound 节点自动分组 */
+  checkIn: (card: AgentCard, sourceIp?: string) => { ok: boolean; intervalMs: number };
   /** 领任务，超时返回 null */
   pullTask: (name: string, timeoutMs: number) => Promise<unknown>;
   /** 上报结果 */
@@ -165,7 +165,7 @@ export function attachMcpFacade(server: http.Server, deps: McpFacadeDeps): void 
   });
 }
 
-export async function mcpHandle(raw: string, req: http.IncomingMessage, res: http.ServerResponse, deps: McpFacadeDeps): Promise<void> {
+export async function mcpHandle(raw: string, req: http.IncomingMessage, res: http.ServerResponse, deps: McpFacadeDeps, sourceIp?: string): Promise<void> {
   let msg: any;
   try { msg = JSON.parse(raw); } catch {
     res.writeHead(400, { "content-type": "application/json" });
@@ -218,7 +218,7 @@ export async function mcpHandle(raw: string, req: http.IncomingMessage, res: htt
               host: a.host ? String(a.host) : undefined,
               capabilities: { streaming: false, adapters: ["mcp"] }
             };
-            const r = deps.checkIn(card);
+            const r = deps.checkIn(card, sourceIp);
             deps.log("++ " + card.name + " checked in via MCP");
             reply(toolResult({ ok: r.ok, heartbeatMs: r.intervalMs, yourName: card.name }));
             return;

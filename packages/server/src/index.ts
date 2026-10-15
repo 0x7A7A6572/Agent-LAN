@@ -214,7 +214,8 @@ export function createServer(options: ServerOptions): http.Server {
           const addr = (conn.localAddress ?? "127.0.0.1").replace("::1", "127.0.0.1").replace("::ffff:", "");
           return "http://" + addr + ":" + port;
         })();
-        const { reconnected } = registry.heartbeat(card, baseUrl);
+        const sourceIp = remote.replace("::ffff:", "").replace("::1", "127.0.0.1");
+        const { reconnected } = registry.heartbeat(card, baseUrl, sourceIp);
         if (reconnected) log("++ " + card.name + " reconnected (" + card.url + ")");
         else log("++ " + card.name + " connected (" + card.url + ")");
         pushPresence();
@@ -341,7 +342,7 @@ export function createServer(options: ServerOptions): http.Server {
       if (req.method === "POST") {
         let body = "";
         for await (const chunk of req) body += chunk;
-        await mcpRoute(body, req, res);
+        await mcpRoute(body, req, res, remote.replace("::ffff:", ""));
         return;
       }
       if (req.method === "GET") {
@@ -398,8 +399,8 @@ export function createServer(options: ServerOptions): http.Server {
 
   // MCP 门面绑线：把 server 内部能力以工具形式暴露
 const mcpDeps: McpFacadeDeps = {
-  checkIn: card => {
-    registry.heartbeat(card, null);
+  checkIn: (card, sourceIp) => {
+    registry.heartbeat(card, null, sourceIp);
     return { ok: true, intervalMs: 10000 };
   },
   pullTask: async (name, ms) => {
@@ -424,8 +425,8 @@ const mcpDeps: McpFacadeDeps = {
   downloadFile: storedName => fileChannel.open(storedName)?.toString("base64"),
   log
 };
-function mcpRoute(body: string, req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
-  return mcpHandle(body, req, res, mcpDeps);
+function mcpRoute(body: string, req: http.IncomingMessage, res: http.ServerResponse, sourceIp: string): Promise<void> {
+  return mcpHandle(body, req, res, mcpDeps, sourceIp);
 }
   return httpServer;
 }

@@ -27,7 +27,7 @@ export function createTui(state: TuiState): (line?: string) => void {
     // 按主机分组展示：同机多 agent 归到一台主机名下
     const groups = new Map<string, AgentPresence[]>();
     for (const p of presences) {
-      const h = p.card.host ?? p.card.url;
+      const h = p.groupHost ?? p.card.host ?? p.card.url;
       if (!groups.has(h)) groups.set(h, []);
       groups.get(h)!.push(p);
     }
