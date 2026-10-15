@@ -17,6 +17,7 @@ const emit = defineEmits<{
 }>()
 
 const title = ref('')
+const titleInput = ref<InstanceType<typeof Input> | null>(null)
 const assignee = ref('')
 const priority = ref<OrderPriority>('normal')
 const childParent = ref<Order | null>(null)
@@ -70,14 +71,19 @@ async function showDetail(id: string) {
   detailOpen.value = true
 }
 
-defineExpose({ showDetail })
+function focusCreate() {
+  const el = (titleInput.value as unknown as { $el?: HTMLInputElement })?.$el
+  el?.focus()
+}
+
+defineExpose({ showDetail, focusCreate })
 </script>
 
 <template>
   <div class="flex flex-col gap-3">
     <!-- 建单行 -->
     <div class="flex flex-wrap items-center gap-2">
-      <Input v-model="title" :placeholder="placeholder" class="h-8 min-w-[160px] flex-1" @keydown.enter="submit" />
+      <Input ref="titleInput" v-model="title" :placeholder="placeholder" class="h-8 min-w-[160px] flex-1" @keydown.enter="submit" />
       <Select v-model="assignee">
         <SelectTrigger class="h-8 w-[130px] text-xs">
           <SelectValue placeholder="指派给…" />
