@@ -4,6 +4,8 @@ import { createClaudeAdapter } from "@mac/adapter-claude";
 import { createCodexAdapter } from "@mac/adapter-codex";
 import { createAcpAdapter } from "@mac/adapter-codex/acp-bridge";
 import os from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import type { AgentAdapter, AgentCard, AgentPresence } from "@mac/sdk";
 
 const port = Number(process.env.MAC_PORT ?? 9600);
@@ -57,6 +59,9 @@ createServer({
   // hub 是基础设施不是 agent，不进名册；给它派活省略 target 即本机执行
   selfRegister: false,
   debugLogs: process.env.MAC_DEBUG_LOGS === "1",
+  // 数据落盘固定仓库根（与启动 cwd 解耦），可用 env 重定向
+  ordersPath: process.env.MAC_ORDERS_PATH ?? path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..", ".orders.json"),
+  rolesPath: process.env.MAC_ROLES_PATH ?? path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..", ".roles.json"),
   // 日志只写底部单行缓存，不触发 TUI 重绘（消刷屏）
   onLog: line => { lastLineCache = line; }
 }).listen(port, async () => {
