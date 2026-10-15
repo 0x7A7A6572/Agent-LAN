@@ -429,6 +429,30 @@ export function createServer(options: ServerOptions): http.Server {
       res.end(pmMd());
       return;
     }
+    if (req.method === "GET" && url.pathname === "/console/pm") {
+      res.writeHead(200, { "content-type": "text/plain; charset=utf-8", connection: "close" });
+      res.end(pmMd());
+      return;
+    }
+    if (req.method === "PUT" && url.pathname === "/console/pm") {
+      let body = "";
+      for await (const chunk of req) body += chunk;
+      try {
+        // 双写：docs 源（防 build 覆盖回旧版）+ dist 运行时模板（pmMd 每请求现读，立即生效）
+        const distMd = path.join(path.dirname(fileURLToPath(import.meta.url)), "pm.md");
+        const srcMd = path.join(path.resolve(options.filesDir ?? ".mac-files"), "..", "docs", "pm-onboarding.md");
+        fs.writeFileSync(distMd, body);
+        try { fs.writeFileSync(srcMd, body); }
+        catch { log("[pm] 源文档写入失败，仅更新了运行时模板"); }
+        log("[pm] 说明书已更新（立即生效）");
+        res.writeHead(200, { "content-type": "application/json", connection: "close" });
+        res.end(JSON.stringify({ ok: true }));
+      } catch (err: any) {
+        res.writeHead(200, { "content-type": "application/json", connection: "close" });
+        res.end(JSON.stringify({ ok: false, error: String(err?.message ?? err) }));
+      }
+      return;
+    }
     if (req.method === "GET" && url.pathname === "/console/presence/stream") {
       res.writeHead(200, {
         "content-type": "text/event-stream",
@@ -454,7 +478,18 @@ export function createServer(options: ServerOptions): http.Server {
     }
     if (req.method === "GET" && url.pathname === "/console/roles") {
       res.writeHead(200, { "content-type": "application/json", connection: "close" });
-      res.end(JSON.stringify({ roles: roleStore.all() }));
+      res.end(JSON.stringify({ roles: roleStore.all(), allowed: roleStore.allowed }));
+      return;
+    }
+    if (req.method === "PUT" && url.pathname === "/console/roles/allowed") {
+      let body = "";
+      for await (const chunk of req) body += chunk;
+      const { roles } = JSON.parse(body);
+      const list = Array.isArray(roles) ? roles.map(String) : [];
+      const saved = roleStore.setAllowed(list);
+      log("[role] 允许列表 -> " + (saved.join(", ") || "（空）"));
+      res.writeHead(200, { "content-type": "application/json", connection: "close" });
+      res.end(JSON.stringify({ ok: true, allowed: saved }));
       return;
     }
     if (req.method === "POST" && url.pathname === "/console/roles") {

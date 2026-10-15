@@ -12,12 +12,12 @@
     display: flex; flex-direction: column; height: 100vh; padding: 16px; gap: 12px;
   }
   h1 { font-size: 16px; color: #f7fbff; display: flex; align-items: center; gap: 10px; }
-  #clearLogs {
+  #clearLogs, #rolesBtn, #pmBtn {
     font-size: 11px; font-weight: 400; cursor: pointer;
     background: #21262d; color: #8b949e;
     border: 1px solid #30363d; border-radius: 6px; padding: 2px 10px;
   }
-  #clearLogs:hover { background: #30363d; color: #c9d1d9; }
+  #clearLogs:hover, #rolesBtn:hover, #pmBtn:hover { background: #30363d; color: #c9d1d9; }
   #summary { font-size: 13px; color: #8b949e; }
   #grid {
     display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
@@ -38,7 +38,7 @@
   }
   .host.online { border-color: #2ea043; }
   .group {
-    border: 1px solid #30363d; border-top: none; border-bottom: none;/* border-radius: 0 0 8px 8px; */
+    border: 1px solid #30363d; border-left: none; border-top: none; border-bottom: none;/* border-radius: 0 0 8px 8px; */
     padding: 8px 10px 10px 14px; margin-bottom: 2px;
    /*  border-left: 3px solid #30363d; */
   }
@@ -164,7 +164,7 @@
 </style>
 </head>
 <body>
-  <h1> Multi-Agent-Connect  <button id="clearLogs">清空日志</button></h1>
+  <h1> Multi-Agent-Connect  <button id="rolesBtn">角色库</button> <button id="pmBtn">PM 说明书</button> <button id="clearLogs">清空日志</button></h1>
   <div id="summary" style="display:flex;align-items:center;gap:12px;">
     <span id="sumText">连接中…</span>
     <span class="viewTabs">
@@ -463,8 +463,43 @@
   });
 
   // ---------- 角色管理 ----------
-  const ROLES = ["requirement", "product", "frontend", "backend", "test", "pm", "docs"];
+  let rolesPromise = null;
+  function loadRoles() {
+    rolesPromise ??= fetch("/console/roles").then(r => r.json()).then(d => d.allowed || []).catch(() => []);
+    return rolesPromise;
+  }
+  document.getElementById("rolesBtn").addEventListener("click", async () => {
+    const cur = await loadRoles();
+    const pick = prompt(
+      "管理角色库（逗号或空格分隔，保存后全量替换）：\n" +
+      "当前：" + (cur.join(", ") || "（空）"), cur.join(", "));
+    if (pick === null) return;
+    const roles = pick.split(/[\s,，]+/).map(s => s.trim()).filter(Boolean);
+    const r = await fetch("/console/roles/allowed", {
+      method: "PUT", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ roles })
+    }).then(r => r.json());
+    if (r.ok) {
+      rolesPromise = Promise.resolve(r.allowed || []);
+      appendLog("[role] 角色库 -> " + (r.allowed.join(", ") || "（空）"));
+    } else appendLog("[role] 角色库保存失败");
+  });
+  // ---------- PM 说明书编辑 ----------
+  document.getElementById("pmBtn").addEventListener("click", async () => {
+    let cur;
+    try { cur = await fetch("/console/pm").then(r => { if (!r.ok) throw 0; return r.text(); }); }
+    catch { appendLog("[pm] 读取失败"); return; }
+    const pick = prompt("编辑 PM 说明书（保存双写源文档与运行时模板）：", cur);
+    if (pick === null) return;
+    const r = await fetch("/console/pm", {
+      method: "PUT", headers: { "content-type": "text/plain" },
+      body: pick
+    }).then(r => r.json());
+    if (r.ok) appendLog("[pm] 说明书已保存（立即生效）");
+    else appendLog("[pm] 保存失败: " + (r.error || "未知错误"));
+  });
   async function pickRole(name, current) {
+    const ROLES = await loadRoles();
     const pick = prompt("设置 " + name + " 的角色：\n" + ROLES.join(" / ") + "\n留空清除", current || "");
     if (pick === null) return;
     const role = pick.trim().toLowerCase();
