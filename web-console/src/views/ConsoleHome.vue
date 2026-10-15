@@ -14,6 +14,14 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import type { OrderStatus } from '@/types/console'
 
 const store = useConsoleStore()
@@ -120,11 +128,27 @@ function onStatusChange(id: string, status: OrderStatus) {
     <header class="sticky top-0 z-40 flex h-14 shrink-0 items-center gap-4 border-b bg-background px-4 md:px-6">
       <div class="flex items-center gap-3">
         <span class="flex size-6 items-center justify-center rounded-full border-2 border-foreground" />
-        <span class="hidden text-sm font-semibold sm:inline">Acme Inc.</span>
+        <span class="hidden text-sm font-semibold sm:inline">Multi-Agent-LAN.</span>
       </div>
-      <span class="text-sm font-medium">Documents</span>
+      <!-- <span class="text-sm font-medium">Documents</span> -->
       <span class="hidden text-xs text-muted-foreground lg:inline">{{ store.summary }}</span>
-      <Button variant="ghost" size="sm" class="ml-auto" @click="clearLogs(); store.logs = []">清空日志</Button>
+      <span class="ml-auto flex items-center gap-2">
+        <DropdownMenu>
+          <DropdownMenuTrigger as-child>
+            <Button variant="secondary" size="icon" class="rounded-full" title="设置">
+              <Settings class="h-4 w-4" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" class="w-44">
+            <DropdownMenuLabel>设置</DropdownMenuLabel>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem @click="rolesOpen = true">角色库</DropdownMenuItem>
+            <DropdownMenuItem @click="pmOpen = true">PM 设定</DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem @click="clearLogs(); store.logs = []">清空日志</DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </span>
     </header>
 
       <main class="flex flex-1 flex-col gap-4 p-4 md:gap-6 md:p-6">

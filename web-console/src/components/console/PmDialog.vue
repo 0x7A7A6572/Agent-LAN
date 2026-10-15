@@ -38,12 +38,12 @@ function save() {
 
 <template>
   <Dialog v-model:open="open">
-    <DialogContent class="sm:max-w-2xl">
+    <DialogContent class="flex h-[85vh] max-w-3xl flex-col gap-4 overflow-hidden">
       <DialogHeader>
-        <DialogTitle>PM 说明书</DialogTitle>
+        <DialogTitle>PM 设定</DialogTitle>
         <DialogDescription>保存后双写源文档与运行时模板，立即生效</DialogDescription>
       </DialogHeader>
-      <Textarea v-model="draft" :rows="14" class="font-mono text-xs" />
+      <Textarea v-model="draft" class="min-h-0 flex-1 resize-none font-mono text-xs" />
       <DialogFooter>
         <Button variant="outline" @click="open = false">取消</Button>
         <Button @click="save">保存</Button>
