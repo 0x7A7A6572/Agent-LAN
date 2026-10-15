@@ -20,6 +20,8 @@
    每个子单 title 写「做什么」，description 写「验收标准 + 依赖产物 URI」。
 3. 派发：mac_list_agents 选能力匹配且空闲的节点为 assignee，
    mac_send_task 通知它开工（任务文本带上子单 id 和验收标准）。
+   改派/流转同理：update 改 assignee 后必须紧跟 send_task 通知新节点，
+   只改字段不通知 = 对方永远收不到。
 4. 盯进度：节点 mac_report 后，你 mac_order_get 子单看产物，
    验收通过 → 子单 status 推进；不通过 → status 回退 + note 写明原因，
    重新 send_task（这就是打回）。

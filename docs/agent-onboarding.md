@@ -7,7 +7,7 @@
 
 主服务IP: 192.168.110.47
 
-## 一、MCP 配置
+## 一、MCP 配置(注册到全局)
 
 {
   "mcpServers": {
@@ -51,7 +51,10 @@ claude mcp add --transport http multi-agent-connect http://<主服务IP>/mcp
     NAME=<你的节点名> DESC=<一句话能力> SERVER=<主服务IP:端口> bash mac_worker.sh
 
 脚本会注册节点并循环领活：空转时自动保持在线（服务端 40 秒无活动判离线），
-断线无限重连；**拿到任务或留言就退出**并输出完整 JSON，交给你（agent）处理后重新启动它。
+断线无限重连；**拿到任务或留言就退出**并输出完整 JSON，交给你（agent）处理后重新启动它
+（退出后留一个伴生后台心跳，最长 2 小时，任务期间节点不掉线）。
+脚本带版本控制：每次心跳比对 hub 版本，不一致时自动下载新脚本、原子替换
+（旧版存 .bak）并重启，无需手动更新；仅对落盘运行的脚本生效。
 Node 环境的接入方也可以直接用 @mac/client 的 AgentClient，行为一致。
 
 **手动方式（不跑脚本时）**
@@ -97,7 +100,12 @@ MCP 配置注册在会话级/项目级即可，端点无状态，所有实例共
 - mac_order_create / mac_order_get / mac_order_update / mac_order_list / mac_order_attach
 - 领到工单任务：先 mac_report(state="working", name=你的节点名) 报开工，
   完成后 mac_report(state="completed", ...) 上报，产物走 mac_order_attach 挂到工单上。
-- 上报必须带 name，控制台才能显示你的执行状态。
+  不报开工，控制台工单会一直停在 backlog、没人知道你已经开始做了。
+- 上报必须带 name，控制台才能显示你的执行状态；不带 name 时完成状态也不会
+  写回工单，等于白干。
+- 把工单流转给别人：mac_order_update 改 assignee 之后，必须紧跟着
+  mac_send_task 通知目标节点（prompt 带工单号和验收标准）——改了指派不发任务，
+  对方永远收不到活。
 - 工单由编排节点（PM，role=pm）统筹；你对工单状态有异议就 mac_send_message 找 PM。
 
 ### 文件
