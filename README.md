@@ -34,3 +34,19 @@ MAC_AGENT_NAME=node-1 MAC_ADAPTER=claude MAC_PORT=9600 pnpm --filter @mac/app st
 ```
 
 环境变量：`MAC_PORT`（默认 9600）、`MAC_AGENT_NAME`（节点名）、`MAC_ADAPTER`（claude | codex）。
+
+## 连接组状态（实时）
+
+每个节点启动后自带两个实时状态台：
+
+| 形式 | 入口 | 说明 |
+|---|---|---|
+| 终端 TUI | 启动即见 | ANSI 单屏覆盖刷新（3s），● 在线 ○ 离线，底部滚动最近事件 |
+| 网页控制台 | `http://localhost:<port>/console` | SSE 实时推送名册，卡片墙 + 日志流 |
+
+### 心跳协议
+
+- 节点每 10s 调任意节点的 `presence/heartbeat`（params.card = AgentCard）
+- 15s 无心跳判离线，60s 无心跳移出名单
+- `presence/leave` 主动下线；`presence/list` 拉全量名册
+- 浏览器控制台走 `GET /console/presence/stream`（SSE）

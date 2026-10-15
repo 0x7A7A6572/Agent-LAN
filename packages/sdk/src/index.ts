@@ -62,3 +62,9 @@ export const A2A_METHODS = {
 } as const;
 
 export const AGENT_CARD_PATH = "/.well-known/agent-card.json";
+
+export interface AgentPresence {
+  card: AgentCard;
+  lastSeen: string;
+  online: boolean;
+}

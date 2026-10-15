@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>multi-agent-connect 控制台</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: Consolas, "Microsoft YaHei", monospace;
+    background: #0d1117; color: #c9d1d9;
+    display: flex; flex-direction: column; height: 100vh; padding: 16px; gap: 12px;
+  }
+  h1 { font-size: 16px; color: #58a6ff; }
+  #summary { font-size: 13px; color: #8b949e; }
+  #grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 10px; overflow-y: auto; flex: 0 0 auto; max-height: 45vh;
+  }
+  .agent {
+    border: 1px solid #30363d; border-radius: 8px; padding: 10px 12px;
+    background: #161b22; transition: border-color .3s;
+  }
+  .agent.online { border-color: #2ea043; }
+  .agent.offline { border-color: #30363d; opacity: .55; }
+  .agent h2 { font-size: 14px; color: #e6edf3; display: flex; align-items: center; gap: 8px; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: #30363d; flex: 0 0 auto; }
+  .online .dot { background: #3fb950; box-shadow: 0 0 6px #3fb950; }
+  .offline .dot { background: #6e7681; }
+  .agent .url { font-size: 12px; color: #8b949e; word-break: break-all; }
+  .agent .meta { font-size: 11px; color: #6e7681; margin-top: 4px; }
+  .agent .badge {
+    font-size: 10px; padding: 1px 6px; border-radius: 10px;
+    border: 1px solid #30363d; color: #8b949e; margin-left: auto;
+  }
+  #logbox {
+    flex: 1; overflow-y: auto; background: #010409; border: 1px solid #30363d;
+    border-radius: 8px; padding: 10px; font-size: 12px; line-height: 1.7;
+  }
+  #logbox div { white-space: pre-wrap; }
+</style>
+</head>
+<body>
+  <h1>multi-agent-connect 连接组</h1>
+  <div id="summary">连接中…</div>
+  <div id="grid"></div>
+  <div id="logbox"></div>
+<script>
+  const grid = document.getElementById("grid");
+  const summary = document.getElementById("summary");
+  const logbox = document.getElementById("logbox");
+  let lastCount = -1;
+
+  function render(presences) {
+    const online = presences.filter(p => p.online);
+    summary.textContent =
+      online.length + " 在线 / " + presences.length + " 已知节点 · 每 10s 心跳 · 15s 无心跳判离线";
+    grid.innerHTML = "";
+    for (const p of presences) {
+      const div = document.createElement("div");
+      div.className = "agent " + (p.online ? "online" : "offline");
+      const seen = new Date(p.lastSeen).toLocaleTimeString("zh-CN", { hour12: false });
+      div.innerHTML =
+        "<h2><span class='dot'></span>" + esc(p.card.name) +
+        "<span class='badge'>" + (p.online ? "在线" : "离线") + "</span></h2>" +
+        "<div class='url'>" + esc(p.card.url) + "</div>" +
+        "<div class='meta'>" + esc(p.card.description || "") + " · 心跳 " + seen + "</div>";
+      grid.appendChild(div);
+    }
+  }
+
+  function esc(s) {
+    return String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  }
+
+  function appendLog(line) {
+    const div = document.createElement("div");
+    div.textContent = line;
+    logbox.appendChild(div);
+    while (logbox.children.length > 300) logbox.firstChild.remove();
+    logbox.scrollTop = logbox.scrollHeight;
+  }
+
+  // SSE 实时名册
+  const es = new EventSource("/console/presence/stream");
+  es.onmessage = e => {
+    try { render(JSON.parse(e.data).presences || []); } catch {}
+  };
+  es.onerror = () => { summary.textContent = "连接中断，重连中…"; };
+
+  // 日志：进页面拉一次全量，之后每 2s 轮询增量（简单可靠）
+  let logCount = 0;
+  async function pollLogs() {
+    try {
+      const r = await fetch("/console/logs").then(r => r.json());
+      const fresh = (r.logs || []).slice(logCount);
+      for (const l of fresh) appendLog(l);
+      logCount = (r.logs || []).length;
+    } catch {}
+  }
+  pollLogs();
+  setInterval(pollLogs, 2000);
+</script>
+</body>
+</html>
