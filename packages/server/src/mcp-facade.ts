@@ -34,6 +34,7 @@ const TOOLS = [
       properties: {
         name: { type: "string", description: "节点唯一名，如 wb-machineA" },
         description: { type: "string", description: "一句话说明本节点能做什么" },
+        host: { type: "string", description: "所在主机标识（机器名或 IP），同机的多个 agent 填同一个" },
         abilities: { type: "array", items: { type: "string" }, description: "能力标签列表" }
       },
       required: ["name"]
@@ -211,6 +212,7 @@ export async function mcpHandle(raw: string, req: http.IncomingMessage, res: htt
               description: [a.description, ...(a.abilities ?? [])].filter(Boolean).join(" · "),
               url: "inbound",
               version: "0.0.1",
+              host: a.host ? String(a.host) : undefined,
               capabilities: { streaming: false, adapters: ["mcp"] }
             };
             const r = deps.checkIn(card);

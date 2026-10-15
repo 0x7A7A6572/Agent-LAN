@@ -17,6 +17,19 @@
     display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
     gap: 10px; overflow-y: auto; flex: 0 0 auto; max-height: 45vh;
   }
+  .host {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 14px; font-weight: 600; color: #e6edf3;
+    padding: 8px 4px 2px; border-bottom: 1px solid #21262d;
+    margin-top: 6px;
+  }
+  .host.online .hdot { background: #3fb950; box-shadow: 0 0 6px #3fb950; }
+  .host.offline .hdot { background: #6e7681; }
+  .hdot { width: 10px; height: 10px; border-radius: 3px; }
+  .hbadge {
+    font-size: 11px; font-weight: 400; color: #8b949e;
+    border: 1px solid #30363d; border-radius: 10px; padding: 1px 8px;
+  }
   .agent {
     border: 1px solid #30363d; border-radius: 8px; padding: 10px 12px;
     background: #161b22; transition: border-color .3s;
@@ -64,20 +77,38 @@
 
   function render(presences) {
     const online = presences.filter(p => p.online);
+    const hosts = new Set(presences.map(p => p.card.host || p.card.url));
+    const onlineHosts = new Set(presences.filter(p => p.online).map(p => p.card.host || p.card.url));
     summary.textContent =
-      online.length + " 在线 / " + presences.length + " 已知节点 · 每 10s 心跳 · 15s 无心跳判离线";
+      online.length + " 在线 / " + presences.length + " 节点 · " +
+      onlineHosts.size + "/" + hosts.size + " 台主机 · 每 10s 心跳";
     grid.innerHTML = "";
+    // 按主机分组：主机头 + 组内 agent 卡片
+    const groups = new Map();
     for (const p of presences) {
-      const div = document.createElement("div");
-      div.className = "agent " + (p.online ? "online" : "offline");
-      const seen = new Date(p.lastSeen).toLocaleTimeString("zh-CN", { hour12: false });
-      div.innerHTML =
-        "<h2><span class='dot'></span>" + esc(p.card.name) +
-        "<span class='badge'>" + (p.online ? "在线" : "离线") + "</span></h2>" +
-        "<div class='url'>" + esc(p.card.url) + "</div>" +
-        "<div class='meta'>" + esc(p.card.description || "") + " · 心跳 " + seen + "</div>" +
-        "<div class='say'><input placeholder='留言插话…' data-to='" + esc(p.card.name) + "'><button data-to='" + esc(p.card.name) + "'>发送</button></div>";
-      grid.appendChild(div);
+      const h = p.card.host || p.card.url;
+      if (!groups.has(h)) groups.set(h, []);
+      groups.get(h).push(p);
+    }
+    for (const [host, members] of groups) {
+      const anyOn = members.some(p => p.online);
+      const head = document.createElement("div");
+      head.className = "host " + (anyOn ? "online" : "offline");
+      head.innerHTML =
+        "<span class='hdot'></span>" + esc(host) +
+        "<span class='hbadge'>" + members.filter(p => p.online).length + "/" + members.length + " 在线</span>";
+      grid.appendChild(head);
+      for (const p of members) {
+        const div = document.createElement("div");
+        div.className = "agent " + (p.online ? "online" : "offline");
+        const seen = new Date(p.lastSeen).toLocaleTimeString("zh-CN", { hour12: false });
+        div.innerHTML =
+          "<h2><span class='dot'></span>" + esc(p.card.name) +
+          "<span class='badge'>" + (p.online ? "在线" : "离线") + "</span></h2>" +
+          "<div class='meta'>" + esc(p.card.description || "") + " · 心跳 " + seen + "</div>" +
+          "<div class='say'><input placeholder='留言插话…' data-to='" + esc(p.card.name) + "'><button data-to='" + esc(p.card.name) + "'>发送</button></div>";
+        grid.appendChild(div);
+      }
     }
   }
 

@@ -4,6 +4,8 @@ export interface AgentCard {
   description?: string;
   url: string;
   version: string;
+  /** 所在主机标识，如机器名或 IP；缺省按节点名分组 */
+  host?: string;
   capabilities: {
     streaming: boolean;
     adapters: string[];

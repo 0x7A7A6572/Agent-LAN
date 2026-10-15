@@ -3,6 +3,7 @@ import { createServer, createTui } from "@mac/server";
 import { createClaudeAdapter } from "@mac/adapter-claude";
 import { createCodexAdapter } from "@mac/adapter-codex";
 import { createAcpAdapter } from "@mac/adapter-codex/acp-bridge";
+import os from "node:os";
 import type { AgentAdapter, AgentCard, AgentPresence } from "@mac/sdk";
 
 const port = Number(process.env.MAC_PORT ?? 9600);
@@ -26,6 +27,7 @@ const card: AgentCard = {
   description: "multi-agent-connect 节点 (" + adapterKind + ")",
   url: "http://0.0.0.0:" + port,
   version: "0.0.1",
+  host: os.hostname(),
   capabilities: { streaming: true, adapters: [adapterKind] }
 };
 

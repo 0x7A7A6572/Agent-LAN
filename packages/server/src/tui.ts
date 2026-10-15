@@ -24,10 +24,22 @@ export function createTui(state: TuiState): (line?: string) => void {
     rows.push("─".repeat(46));
     rows.push("在线 " + online.length + " / 已知 " + presences.length);
     rows.push("");
+    // 按主机分组展示：同机多 agent 归到一台主机名下
+    const groups = new Map<string, AgentPresence[]>();
     for (const p of presences) {
-      const mark = p.online ? GREEN + "●" : GRAY + "○";
-      const time = new Date(p.lastSeen).toLocaleTimeString("zh-CN", { hour12: false });
-      rows.push(mark + " " + p.card.name.padEnd(12) + DIM + p.card.url + "  " + time + RESET);
+      const h = p.card.host ?? p.card.url;
+      if (!groups.has(h)) groups.set(h, []);
+      groups.get(h)!.push(p);
+    }
+    for (const [host, members] of groups) {
+      const anyOn = members.some(p => p.online);
+      rows.push((anyOn ? GREEN : GRAY) + "▣ " + host + RESET + DIM + "  (" + members.filter(p => p.online).length + "/" + members.length + " 在线)" + RESET);
+      for (const p of members) {
+        const mark = p.online ? GREEN + "  ●" : GRAY + "  ○";
+        const time = new Date(p.lastSeen).toLocaleTimeString("zh-CN", { hour12: false });
+        rows.push(mark + " " + p.card.name.padEnd(12) + DIM + p.card.description?.slice(0, 40) + "  " + time + RESET);
+      }
+      rows.push("");
     }
     if (presences.length === 0) rows.push(DIM + "（暂无其他节点接入）" + RESET);
     rows.push("");

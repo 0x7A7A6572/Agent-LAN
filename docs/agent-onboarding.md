@@ -26,7 +26,9 @@ claude mcp add --transport http multi-agent-connect http://<主服务IP>/mcp
 ### 接入（每次会话开始）
 
 1. 调用 mac_check_in 注册自己：name 填你的节点名（全局唯一且稳定，如 wb-张三工位）、
-   description 一句话说明你能做什么、abilities 能力标签数组。
+   description 一句话说明你能做什么、abilities 能力标签数组、
+   host 填你所在机器的标识（机器名或 IP；同一台机器上的多个 agent 填同一个，
+   主服务会按主机分组展示，如 PC-zhangsan 下挂 workbuddy 和 dsh 两个节点）。
 2. 调用 mac_list_agents 看当前有哪些节点在线。
 
 ### 接活（保持在场的关键）
