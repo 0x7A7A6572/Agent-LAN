@@ -1,6 +1,6 @@
 // A2A server：Agent Card 发现、任务状态机、心跳名册、控制台
 import http from "node:http";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -29,6 +29,8 @@ export interface ServerOptions {
   ordersPath?: string;
   /** 角色映射落盘文件，缺省 filesDir 同级 .roles.json */
   rolesPath?: string;
+  /** 节点名册落盘文件，缺省 filesDir 同级 .nodes.json */
+  nodesPath?: string;
   /** debug 日志（心跳/check_in 刷屏类）是否显示，默认否 */
   debugLogs?: boolean;
 }
@@ -37,7 +39,8 @@ const terminalStates: ReadonlySet<TaskState> = new Set(["completed", "failed", "
 
 export function createServer(options: ServerOptions): http.Server {
   const tasks = new Map<string, Task>();
-  const registry = new Registry();
+  const registry = new Registry(options.nodesPath
+    ?? path.join(path.resolve(options.filesDir ?? ".mac-files"), "..", ".nodes.json"));
   const sseClients = new Map<string, Set<http.ServerResponse>>();
   const presenceSubs = new Set<http.ServerResponse>();
   const logs: string[] = [];
@@ -87,6 +90,10 @@ export function createServer(options: ServerOptions): http.Server {
       log("-> task " + task.id.slice(0, 8) + " pulled by " + name);
       return task;
     }
+    // 会话接管：同 name 只允许一个活跃 waiter，新 pull 抵达即踢旧（旧立即空手返回）
+    // 保证任务单消费者，多会话共用身份时不会互抢
+    const old = (pullWaiters.get(name) ?? []).slice();
+    for (const w of old) w(null as any);
     return new Promise<Task | null>((resolve) => {
       // 等待期间连接还挂着：连接活着就算在线，5s 续一次
       const keepAlive = setInterval(() => registry.touch(name), 5000);
@@ -102,17 +109,44 @@ export function createServer(options: ServerOptions): http.Server {
         finish(null);
       }, timeoutMs);
       timer.unref?.();
-      const wake = (task: Task) => {
+      const wake = (task: Task | null) => {
         clearTimeout(timer);
-        task.state = "working";
-        task.updatedAt = new Date().toISOString();
-        registry.setBusy(name, true, workingOnOf(task));
-        log("-> task " + task.id.slice(0, 8) + " pushed to " + name);
+        const waiters = pullWaiters.get(name) ?? [];
+        const i = waiters.indexOf(wake);
+        if (i >= 0) waiters.splice(i, 1);
+        if (task) {
+          task.state = "working";
+          task.updatedAt = new Date().toISOString();
+          registry.setBusy(name, true, workingOnOf(task));
+          log("-> task " + task.id.slice(0, 8) + " pushed to " + name);
+        }
         finish(task);
       };
       if (!pullWaiters.has(name)) pullWaiters.set(name, []);
       pullWaiters.get(name)!.push(wake);
     });
+  }
+
+  /** 任务状态 → 工单状态映射（1A）：终态与开工都自动流转 */
+  const ORDER_STATE_MAP: Record<string, string> = {
+    working: "developing", completed: "done", failed: "canceled", canceled: "canceled"
+  };
+  /** 任务 prompt 里提取工单号，回写工单状态；已终态的工单不再被拉回 */
+  function syncOrderFromTask(task: Task, state: string, by: string): void {
+    // orderStore 在下方才初始化，回写只发生在运行期，此处必已就绪
+    if (!orderStore) return;
+    const m = /[工单 (ord-w+)]/.exec(task.prompt);
+    if (!m) return;
+    const next = ORDER_STATE_MAP[state];
+    if (!next) return;
+    const o = orderStore.get(m[1]);
+    if (!o || o.status === "done" || o.status === "canceled") return;
+    try {
+      orderStore.update(m[1], { status: next as any, force: true }, by);
+      log("[order] " + m[1] + " -> " + next + " (by " + by + ")");
+    } catch (err: any) {
+      log("[order] 回写失败 " + m[1] + ": " + String(err?.message ?? err));
+    }
   }
 
   /** 客户端上报结果：更新任务并推送事件 */
@@ -128,6 +162,7 @@ export function createServer(options: ServerOptions): http.Server {
     }
     pushEvent(taskId, { kind: "status", status: { state: t.state, timestamp: t.updatedAt } });
     log("[task] " + taskId.slice(0, 8) + " -> " + t.state + " (by agent)");
+    syncOrderFromTask(t, state, "mcp-report");
     return true;
   }
 
@@ -150,10 +185,10 @@ export function createServer(options: ServerOptions): http.Server {
   const withRoles = (list: AgentPresence[]) =>
     list.map(p => ({ ...p, role: roleStore.get(p.card.name) || undefined }));
   // 落盘是防抖的：退出前同步 flush，防尾写丢失
-  const flushOrders = () => orderStore.flushNow();
-  process.on("exit", flushOrders);
-  process.on("SIGINT", () => { flushOrders(); process.exit(0); });
-  process.on("SIGTERM", () => { flushOrders(); process.exit(0); });
+  const flushStores = () => { orderStore.flushNow(); registry.flushNow(); };
+  process.on("exit", flushStores);
+  process.on("SIGINT", () => { flushStores(); process.exit(0); });
+  process.on("SIGTERM", () => { flushStores(); process.exit(0); });
 
   if (options.selfRegister !== false) {
     registry.heartbeat(options.card);
@@ -327,9 +362,15 @@ export function createServer(options: ServerOptions): http.Server {
   const webRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), "web");
 
   // 官方接入脚本：节点一条命令下载，规则统一由服务端维护
-  function workerScript(): string {
+  // 版本=去占位行后内容 sha256 前 8 位，注入占位后缓存；节点心跳比对自动更新
+  let workerCache: { version: string; script: string } | null = null;
+  function workerScript(): { version: string; script: string } {
+    if (workerCache) return workerCache;
     const tpl = path.join(path.dirname(fileURLToPath(import.meta.url)), "worker.sh");
-    return fs.readFileSync(tpl, "utf8");
+    const raw = fs.readFileSync(tpl, "utf8");
+    const version = createHash("sha256").update(raw.replace(/^WORKER_VERSION=.*$/m, "")).digest("hex").slice(0, 8);
+    workerCache = { version, script: raw.replace("__VERSION__", version) };
+    return workerCache;
   }
 
   // 接入体检脚本：目标机器自检 bash/curl/写权限/网络
@@ -421,7 +462,7 @@ export function createServer(options: ServerOptions): http.Server {
     }
     if (req.method === "GET" && url.pathname === "/worker.sh") {
       res.writeHead(200, { "content-type": "text/x-shellscript; charset=utf-8" });
-      res.end(workerScript());
+      res.end(workerScript().script);
       return;
     }
     if (req.method === "GET" && url.pathname === "/probe.sh") {
@@ -518,6 +559,23 @@ export function createServer(options: ServerOptions): http.Server {
       return;
     }
     // 工单 REST：控制台专用转发（与 mac_order_* 同一 OrderStore）
+    if (req.method === "DELETE" && url.pathname.startsWith("/console/nodes/")) {
+      const name = decodeURIComponent(url.pathname.slice("/console/nodes/".length));
+      const ok = registry.remove(name);
+      log("[node] " + (ok ? "已删除节点记录: " + name : "节点不存在: " + name));
+      if (ok) pushPresence();
+      res.writeHead(200, { "content-type": "application/json", connection: "close" });
+      res.end(JSON.stringify({ ok }));
+      return;
+    }
+    if (req.method === "DELETE" && url.pathname.startsWith("/console/orders/")) {
+      const id = decodeURIComponent(url.pathname.slice("/console/orders/".length));
+      const ok = orderStore.remove(id);
+      log("[order] " + (ok ? "已删除工单: " + id : "工单不存在: " + id));
+      res.writeHead(200, { "content-type": "application/json", connection: "close" });
+      res.end(JSON.stringify({ ok }));
+      return;
+    }
     if (req.method === "GET" && url.pathname === "/console/orders") {
       const q = url.searchParams;
       const list = orderStore.list({
@@ -549,7 +607,8 @@ export function createServer(options: ServerOptions): http.Server {
         if (o.assignee && registry.find(o.assignee)) {
           enqueueFor(o.assignee, {
             id: randomUUID(), state: "submitted",
-            prompt: "[工单 " + o.id + "] " + o.title + "\n" + o.description,
+            prompt: "[工单 " + o.id + "] " + o.title + "\n" + o.description +
+              "\n\n[开工先 mac_report(taskId, state=\"working\", name=你的节点名)；完成后 mac_report(completed)。这是硬性流程]",
             artifacts: [], createdAt: o.createdAt, updatedAt: o.updatedAt
           });
           log("-> order " + o.id + " dispatched to " + o.assignee);
@@ -645,8 +704,14 @@ export function createServer(options: ServerOptions): http.Server {
   // MCP 门面绑线：把 server 内部能力以工具形式暴露
 const mcpDeps: McpFacadeDeps = {
   checkIn: (card, sourceIp) => {
-    registry.heartbeat(card, null, sourceIp);
-    return { ok: true, intervalMs: 10000 };
+    const r = registry.heartbeat(card, null, sourceIp);
+    return {
+      ok: !r.conflict,
+      conflictHost: r.conflict,
+      intervalMs: 10000,
+      workerVersion: workerScript().version,
+      guideUrl: "http://" + FileChannel.lanAddress() + ":" + options.port + "/mcp/install.md"
+    };
   },
   pullTask: async (name, ms) => {
     const task = await pullTask(name, ms);
@@ -664,7 +729,7 @@ const mcpDeps: McpFacadeDeps = {
   },
   getTask: id => tasks.get(id) ?? { error: "任务不存在: " + id },
   listAgents: () => withRoles(registry.list()),
-  touch: name => registry.touch(name),
+  touch: (name, mcp) => registry.touch(name, mcp),
   sendMail: (to, text, from) => {
     if (!registry.find(to)) return { ok: false };
     handleRpc("mailbox/send", { to, text, from }, "mcp", new URL("http://mcp.local"), { localAddress: "127.0.0.1", localPort: options.port });
@@ -684,6 +749,7 @@ const mcpDeps: McpFacadeDeps = {
     orderStore.attach(id, { name, uri, by });
     return { name, uri, by };
   },
+  getGuide: () => installMd(),
   log
 };
 function mcpRoute(body: string, req: http.IncomingMessage, res: http.ServerResponse, sourceIp: string): Promise<void> {

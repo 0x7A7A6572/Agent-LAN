@@ -78,6 +78,13 @@ export class OrderStore {
 
   get(id: string): Order | undefined { return this.orders.get(id); }
 
+  /** 控制台手动删除工单，返回是否删到 */
+  remove(id: string): boolean {
+    const ok = this.orders.delete(id);
+    if (ok) this.save();
+    return ok;
+  }
+
   list(f: { status?: string; assignee?: string; tag?: string; parent?: string; priority?: string }): Order[] {
     const rank = { urgent: 0, high: 1, normal: 2, low: 3 } as const;
     return [...this.orders.values()]
@@ -86,8 +93,8 @@ export class OrderStore {
         && (!f.parent || o.parent === f.parent)
         && (!f.priority || o.priority === f.priority)
         && (!f.tag || o.tags.includes(f.tag)))
-      .sort((a, b) => rank[a.priority] - rank[b.priority]
-        || b.updatedAt.localeCompare(a.updatedAt));
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)
+        || rank[a.priority] - rank[b.priority]);
   }
 
   update(id: string, patch: OrderUpdateInput, by: string): Order {
