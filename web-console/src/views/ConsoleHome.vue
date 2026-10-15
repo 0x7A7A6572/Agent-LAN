@@ -121,10 +121,6 @@ function onStatusChange(id: string, status: OrderStatus) {
       <div class="flex items-center gap-3">
         <span class="flex size-6 items-center justify-center rounded-full border-2 border-foreground" />
         <span class="hidden text-sm font-semibold sm:inline">Acme Inc.</span>
-        <Button size="sm" @click="onCreateFromSidebar">
-          <Plus class="h-4 w-4" />
-          创建工单
-        </Button>
       </div>
       <span class="text-sm font-medium">Documents</span>
       <span class="hidden text-xs text-muted-foreground lg:inline">{{ store.summary }}</span>
@@ -155,7 +151,11 @@ function onStatusChange(id: string, status: OrderStatus) {
                   <Badge variant="outline" class="text-[10px]">{{ t.count }}</Badge>
                 </TabsTrigger>
               </TabsList>
-              <Button variant="outline" size="sm" class="ml-auto" @click="rolesOpen = true">角色库</Button>
+              <Button size="sm" class="ml-auto" @click="onCreateFromSidebar">
+                <Plus class="h-4 w-4" />
+                创建工单
+              </Button>
+              <Button variant="outline" size="sm" @click="rolesOpen = true">角色库</Button>
               <Button variant="outline" size="sm" @click="pmOpen = true">PM 说明书</Button>
             </div>
             <TabsContent v-for="t in statusTabs" :key="t.key" :value="t.key">
