@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { ArrowUpRight, Mail } from 'lucide-vue-next'
+import { Plus } from 'lucide-vue-next'
 import { useConsoleStore } from '@/stores/console'
 import { useAppStore } from '@/stores/app'
 import { sendMail, dispatchTask, setNodeRole, saveRoles, savePmDoc, clearLogs } from '@/api/console'
 import AppSidebar from '@/components/console/AppSidebar.vue'
+import CreateOrderDialog from '@/components/console/CreateOrderDialog.vue'
 import NodeCard from '@/components/console/NodeCard.vue'
 import OrderPanel from '@/components/console/OrderPanel.vue'
 import LogPanel from '@/components/console/LogPanel.vue'
@@ -28,6 +29,7 @@ const pickOpen = ref(false)
 const pickName = ref('')
 const pickCurrent = ref('')
 const fabOpen = ref(false)
+const sidebarCreateOpen = ref(false)
 
 function log(line: string) {
   store.logs = [...store.logs, line]
@@ -62,11 +64,8 @@ const tabOrders = computed(() => {
 const activeTab = ref('active')
 
 function onCreateFromSidebar() {
-  document.getElementById('sec-orders')?.scrollIntoView({ behavior: 'smooth' })
-  orderPanel.value?.focusCreate?.()
+  sidebarCreateOpen.value = true
 }
-
-const orderPanel = ref<InstanceType<typeof OrderPanel> | null>(null)
 
 function onSend(to: string, text: string, mode: 'mail' | 'task') {
   if (mode === 'task') {
@@ -157,14 +156,12 @@ function onStatusChange(id: string, status: OrderStatus) {
                   <Badge variant="outline" class="text-[10px]">{{ t.count }}</Badge>
                 </TabsTrigger>
               </TabsList>
-              <Button variant="outline" size="sm" class="ml-auto" @click="rolesOpen = true">
-                角色库
-                <ArrowUpRight class="h-3.5 w-3.5" />
+              <Button size="sm" class="ml-auto" @click="sidebarCreateOpen = true">
+                <Plus class="h-4 w-4" />
+                创建工单
               </Button>
-              <Button variant="outline" size="sm" @click="pmOpen = true">
-                PM 说明书
-                <ArrowUpRight class="h-3.5 w-3.5" />
-              </Button>
+              <Button variant="outline" size="sm" @click="rolesOpen = true">角色库</Button>
+              <Button variant="outline" size="sm" @click="pmOpen = true">PM 说明书</Button>
             </div>
             <TabsContent v-for="t in statusTabs" :key="t.key" :value="t.key">
               <Card>
@@ -198,6 +195,11 @@ function onStatusChange(id: string, status: OrderStatus) {
     </div>
 
     <RolesDialog v-model:open="rolesOpen" :roles="store.roles" @save="onRolesSave" />
+    <CreateOrderDialog
+      v-model:open="sidebarCreateOpen"
+      :node-names="store.nodeNames"
+      @create="onOrderCreate"
+    />
     <PmDialog v-model:open="pmOpen" @save="onPmSave" />
     <RolePickDialog v-model:open="pickOpen" :roles="store.roles" :node-name="pickName" :current="pickCurrent" @pick="onPickConfirm" />
   </SidebarProvider>
