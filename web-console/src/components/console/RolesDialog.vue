@@ -1,8 +1,15 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
-import Dialog from '@/components/ui/Dialog.vue'
-import Button from '@/components/ui/Button.vue'
-import Textarea from '@/components/ui/Textarea.vue'
+import { Button } from '@/components/ui/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { Textarea } from '@/components/ui/textarea'
 
 const props = defineProps<{ roles: string[] }>()
 const emit = defineEmits<{ (e: 'save', roles: string[]): void }>()
@@ -22,11 +29,17 @@ function save() {
 </script>
 
 <template>
-  <Dialog v-model:open="open" title="角色库" description="逗号或空格分隔，保存后全量替换，节点无需重连">
-    <Textarea v-model="draft" :rows="6" placeholder="pm / dev / qa …" />
-    <div class="mt-4 flex justify-end gap-2">
-      <Button variant="ghost" size="sm" @click="open = false">取消</Button>
-      <Button size="sm" @click="save">保存</Button>
-    </div>
+  <Dialog v-model:open="open">
+    <DialogContent class="sm:max-w-md">
+      <DialogHeader>
+        <DialogTitle>角色库</DialogTitle>
+        <DialogDescription>逗号或空格分隔，保存后全量替换，节点无需重连</DialogDescription>
+      </DialogHeader>
+      <Textarea v-model="draft" :rows="6" placeholder="pm / dev / qa …" />
+      <DialogFooter>
+        <Button variant="outline" @click="open = false">取消</Button>
+        <Button @click="save">保存</Button>
+      </DialogFooter>
+    </DialogContent>
   </Dialog>
 </template>

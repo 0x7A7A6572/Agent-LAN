@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { Plus } from 'lucide-vue-next'
-import Button from '@/components/ui/Button.vue'
-import Input from '@/components/ui/Input.vue'
-import Select from '@/components/ui/Select.vue'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import OrderTree from './OrderTree.vue'
 import type { Order, OrderDetail, OrderPriority, OrderStatus } from '@/types/console'
 
@@ -24,11 +24,7 @@ const expanded = ref<Record<string, boolean>>({})
 const detail = ref<string>('')
 const detailOpen = ref(false)
 
-const assigneeOptions = computed(() => [
-  { value: '', label: childParent.value ? '指派给…（可空）' : '指派给…' },
-  ...props.nodeNames.map(n => ({ value: n, label: n })),
-])
-const priorityOptions: { value: OrderPriority; label: string }[] = [
+const PRIORITIES: { value: OrderPriority; label: string }[] = [
   { value: 'normal', label: '普通' },
   { value: 'high', label: '高' },
   { value: 'urgent', label: '紧急' },
@@ -78,32 +74,59 @@ defineExpose({ showDetail })
 </script>
 
 <template>
-  <div class="flex flex-col gap-2.5">
-    <!-- 建单行：父单与子单共用 -->
-    <div class="flex flex-wrap items-center gap-1.5">
-      <Input v-model="title" :placeholder="placeholder" class="min-w-[180px] flex-1" @keydown.enter="submit" />
-      <Select v-model="assignee" :options="assigneeOptions" />
-      <Select v-model="priority" :options="priorityOptions" />
-      <Button size="sm" @click="submit">
-        <Plus class="h-3.5 w-3.5" />
-        {{ childParent ? '建子单派发' : '建单派发' }}
+  <div class="flex flex-col gap-3">
+    <!-- 建单行 -->
+    <div class="flex flex-wrap items-center gap-2">
+      <Input v-model="title" :placeholder="placeholder" class="h-8 min-w-[160px] flex-1" @keydown.enter="submit" />
+      <Select v-model="assignee">
+        <SelectTrigger class="h-8 w-[130px] text-xs">
+          <SelectValue placeholder="指派给…" />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem v-for="n in nodeNames" :key="n" :value="n" class="text-xs">{{ n }}</SelectItem>
+        </SelectContent>
+      </Select>
+      <Select v-model="priority">
+        <SelectTrigger class="h-8 w-[90px] text-xs">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem v-for="p in PRIORITIES" :key="p.value" :value="p.value" class="text-xs">{{ p.label }}</SelectItem>
+        </SelectContent>
+      </Select>
+      <Button size="sm" class="h-8" @click="submit">
+        <Plus class="h-4 w-4" />
+        {{ childParent ? '建子单' : '建单派发' }}
       </Button>
-      <Button v-if="childParent" variant="ghost" size="sm" @click="childParent = null">
-        取消子单（{{ childParent.id }}）
+      <Button v-if="childParent" variant="ghost" size="sm" class="h-8" @click="childParent = null">
+        取消（{{ childParent.id }}）
       </Button>
     </div>
 
-    <OrderTree
-      v-model:expanded="expanded"
-      :orders="roots"
-      :all-orders="orders"
-      @select="showDetail"
-      @status-change="(id, s) => emit('status-change', id, s)"
-      @create-child="o => (childParent = o)"
-    />
-    <div v-if="!orders.length" class="py-8 text-center text-xs text-muted-foreground">还没有工单</div>
+    <!-- 树形列表 -->
+    <div class="rounded-lg border">
+      <div class="flex items-center gap-3 border-b px-3 py-2 text-xs font-medium text-muted-foreground">
+        <span class="w-4" />
+        <span class="hidden sm:inline">编号</span>
+        <span class="flex-1">标题</span>
+        <span class="hidden md:inline">处理人 / 截止</span>
+        <span>状态</span>
+        <span class="w-[110px]">流转</span>
+      </div>
+      <div class="p-2">
+        <OrderTree
+          v-model:expanded="expanded"
+          :orders="roots"
+          :all-orders="orders"
+          @select="showDetail"
+          @status-change="(id, s) => emit('status-change', id, s)"
+          @create-child="o => (childParent = o)"
+        />
+        <div v-if="!orders.length" class="py-8 text-center text-sm text-muted-foreground">还没有工单</div>
+      </div>
+    </div>
 
-    <!-- 工单详情：文本面板 -->
-    <pre v-if="detailOpen" class="max-h-[30vh] overflow-y-auto whitespace-pre-wrap rounded-md border border-border bg-background p-3 text-xs leading-relaxed text-foreground">{{ detail }}</pre>
+    <!-- 工单详情 -->
+    <pre v-if="detailOpen" class="max-h-[30vh] overflow-y-auto whitespace-pre-wrap rounded-lg border bg-muted/40 p-3 text-xs leading-relaxed">{{ detail }}</pre>
   </div>
 </template>
