@@ -81,6 +81,7 @@ export function createServer(options: ServerOptions): http.Server {
     const q = pullQueues.get(name);
     if (q?.length) {
       const task = q.shift()!;
+      registry.setBusy(name, true);
       log("-> task " + task.id.slice(0, 8) + " pulled by " + name);
       return task;
     }
@@ -101,6 +102,7 @@ export function createServer(options: ServerOptions): http.Server {
       timer.unref?.();
       const wake = (task: Task) => {
         clearTimeout(timer);
+        registry.setBusy(name, true);
         log("-> task " + task.id.slice(0, 8) + " pushed to " + name);
         finish(task);
       };
@@ -575,7 +577,11 @@ const mcpDeps: McpFacadeDeps = {
     const mail = dropMail(name);
     return { task, messages: mail };
   },
-  report: (taskId, state, text, artifacts) => reportResult(taskId, state, text, artifacts),
+  report: (taskId, state, text, artifacts, by) => {
+    // 节点上报结果驱动执行中状态：working 置位，终态清除
+    if (by) registry.setBusy(by, state === "working");
+    return reportResult(taskId, state, text, artifacts);
+  },
   sendTask: async (prompt, target) => {
     const r = await handleRpc("message/send", { prompt, target }, "mcp", new URL("http://mcp.local"), { localAddress: "127.0.0.1", localPort: options.port }) as { task: { id: string; state: string } };
     return { taskId: r.task.id, state: r.task.state };

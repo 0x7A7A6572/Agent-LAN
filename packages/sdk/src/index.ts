@@ -69,6 +69,10 @@ export interface AgentPresence {
   card: AgentCard;
   lastSeen: string;
   online: boolean;
+  /** 执行中标记：已领任务未上报结果；控制台按蓝色显示 */
+  state?: "idle" | "working";
+  /** busy 起始毫秒（服务端内部用，防僵尸超时判定） */
+  busySince?: number;
   /** 心跳来源推算的对端根地址，如 http://192.168.1.2:9600 */
   baseUrl?: string;
   /** 分组用主机标识：卡片 host > 来源 IP > url 兜底（服务端算好） */

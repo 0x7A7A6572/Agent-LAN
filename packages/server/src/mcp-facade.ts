@@ -10,8 +10,8 @@ export interface McpFacadeDeps {
   checkIn: (card: AgentCard, sourceIp?: string) => { ok: boolean; intervalMs: number };
   /** 领任务，超时返回 null */
   pullTask: (name: string, timeoutMs: number) => Promise<unknown>;
-  /** 上报结果 */
-  report: (taskId: string, state: string, text?: string, artifacts?: { name: string; uri: string }[]) => boolean;
+  /** 上报结果；by 为上报节点名，驱动执行中状态 */
+  report: (taskId: string, state: string, text?: string, artifacts?: { name: string; uri: string }[], by?: string) => boolean;
   /** 派任务给指定节点 */
   sendTask: (prompt: string, target?: string) => Promise<{ taskId: string; state: string }>;
   /** 查任务 */
@@ -68,11 +68,12 @@ const TOOLS = [
   },
   {
     name: "mac_report",
-    description: "上报任务执行结果。任务完成或失败时必须调用",
+    description: "上报任务执行结果。任务完成或失败时必须调用；执行中可先报 state=working 让控制台显示执行中",
     inputSchema: {
       type: "object",
       properties: {
         taskId: { type: "string" },
+        name: { type: "string", description: "你的节点名（与 mac_check_in 一致），用于即时刷新执行中状态" },
         state: { type: "string", enum: ["completed", "failed", "working", "input-required"] },
         text: { type: "string", description: "结果文本或失败原因" },
         files: {
@@ -334,11 +335,12 @@ export async function mcpHandle(raw: string, req: http.IncomingMessage, res: htt
             return;
           }
           case "mac_report": {
+            // name 可选：带上才能即时刷新执行中状态（与 pull 的 name 一致）
             const files = (a.files ?? []).map((f: { name: string; contentBase64: string }) => ({
               name: f.name,
               uri: deps.uploadFile(f.name, f.contentBase64)
             }));
-            const ok = deps.report(String(a.taskId), String(a.state), a.text, files.length ? files : undefined);
+            const ok = deps.report(String(a.taskId), String(a.state), a.text, files.length ? files : undefined, a.name ? String(a.name) : undefined);
             reply(toolResult({ ok, files: files.map((f: { uri: string }) => f.uri) }));
             return;
           }

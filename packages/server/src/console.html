@@ -48,17 +48,20 @@
     background: #161b22; transition: border-color .3s;
   }
   .agent.online { border-color: #2ea043; }
+  .agent.working { border-color: #1f6feb; }
   .agent.offline { border-color: #30363d; opacity: .55; }
   .agent h2 { font-size: 14px; color: #e6edf3; display: flex; align-items: center; gap: 8px; }
   .agent h2 .logo { width: 18px; height: 18px; border-radius: 4px; object-fit: contain; flex: 0 0 auto; background: #0d1117; }
   .dot { width: 9px; height: 9px; border-radius: 50%; background: #30363d; flex: 0 0 auto; }
   .online .dot { background: #3fb950; box-shadow: 0 0 6px #3fb950; }
+  .working .dot { background: #58a6ff; box-shadow: 0 0 6px #58a6ff; }
   .offline .dot { background: #6e7681; }
   .agent .url { font-size: 12px; color: #8b949e; word-break: break-all; }
   .agent .meta {
     font-size: 11px; color: #6e7681; margin-top: 4px;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
+  .agent .badge.busy { color: #58a6ff; border-color: #1f6feb; background: rgba(31,111,235,.15); }
   .agent .badge {
     font-size: 10px; padding: 1px 6px; border-radius: 10px;
     /* border: 1px solid #30363d; */ color: #8b949e; margin-left: auto;
@@ -255,10 +258,12 @@
       let c = cards.get(p.card.name);
       if (!c) { c = buildCard(p); cards.set(p.card.name, c); }
       // 原地更新变化的部分
-      const cls = "agent " + (p.online ? "online" : "offline");
+      const cls = "agent " + (p.online ? (p.state === "working" ? "online working" : "online") : "offline");
       if (c.el.className !== cls) c.el.className = cls;
-      const badge = p.online ? "在线" : "离线";
+      const badge = p.state === "working" && p.online ? "执行中"
+        : p.online ? "在线" : "离线";
       if (c.badge.textContent !== badge) c.badge.textContent = badge;
+      c.badge.classList.toggle("busy", badge === "执行中");
       const meta = esc(p.card.description || "") + " · 心跳 " + new Date(p.lastSeen).toLocaleTimeString("zh-CN", { hour12: false });
       if (c.meta.dataset.raw !== p.lastSeen + p.card.description) {
         c.meta.dataset.raw = p.lastSeen + p.card.description;

@@ -3,6 +3,8 @@ import type { AgentCard, AgentPresence } from "@mac/sdk";
 
 const OFFLINE_AFTER_MS = 40000;
 const DEAD_AFTER_MS = 300000;
+// busy 豁免离线判定的上限，防节点崩死挂成僵尸执行中
+const BUSY_MAX_MS = 7200000;
 
 export class Registry {
   private agents = new Map<string, AgentPresence>();
@@ -37,6 +39,16 @@ export class Registry {
     return this.agents.get(name);
   }
 
+  /** 执行中标记：领到任务置位，上报结果清除 */
+  setBusy(name: string, on: boolean): boolean {
+    const p = this.agents.get(name);
+    if (!p) return false;
+    p.state = on ? "working" : "idle";
+    if (on) p.busySince = Date.now();
+    p.lastSeen = new Date().toISOString();
+    return true;
+  }
+
   /** 标记节点主动下线 */
   leave(name: string): boolean {
     const p = this.agents.get(name);
@@ -51,8 +63,11 @@ export class Registry {
     const now = Date.now();
     for (const [name, p] of this.agents) {
       const age = now - new Date(p.lastSeen).getTime();
-      if (age > DEAD_AFTER_MS) this.agents.delete(name);
-      else if (age > OFFLINE_AFTER_MS && p.online) p.online = false;
+      if (age > DEAD_AFTER_MS) { this.agents.delete(name); continue; }
+      // 执行中的节点不产生心跳（worker 领活即退出），豁免离线判定
+      const busyOk = p.state === "working"
+        && p.busySince && now - p.busySince < BUSY_MAX_MS;
+      if (!busyOk && age > OFFLINE_AFTER_MS && p.online) p.online = false;
     }
   }
 
