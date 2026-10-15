@@ -2,6 +2,13 @@
 import { computed, ref } from 'vue'
 import { Plus } from 'lucide-vue-next'
 import { Button } from '@/components/ui/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import CreateOrderDialog from './CreateOrderDialog.vue'
 import OrderTree from './OrderTree.vue'
 import type { Order, OrderDetail, OrderPriority, OrderStatus } from '@/types/console'
@@ -18,19 +25,23 @@ const emit = defineEmits<{
 const createOpen = ref(false)
 const childParent = ref<{ id: string; title: string } | null>(null)
 const expanded = ref<Record<string, boolean>>({})
-const detail = ref<string>('')
+
+// 详情弹窗：标题=工单号，正文=格式化文本
 const detailOpen = ref(false)
+const detailTitle = ref('')
+const detailText = ref('')
 
 const roots = computed(() => props.orders.filter(o => !o.parent))
 
 async function showDetail(id: string) {
   const r = await fetch('/console/orders/' + id).then(x => x.json() as Promise<OrderDetail | { error: string }>)
   if ('error' in r) {
-    detail.value = r.error
+    detailTitle.value = id
+    detailText.value = r.error
   } else {
     const o = r.order
-    detail.value = [
-      '【' + o.id + '】' + o.title,
+    detailTitle.value = o.id + ' ' + o.title
+    detailText.value = [
       '状态: ' + o.status + ' · 优先级: ' + o.priority + ' · 处理人: ' + (o.assignee || '未指派'),
       '描述: ' + (o.description || '—'),
       '来源: ' + o.source + ' · 创建: ' + o.createdAt.slice(0, 16) + ' · 截止: ' + (o.dueDate || '—'),
@@ -69,8 +80,16 @@ defineExpose({ showDetail })
       <div v-if="!orders.length" class="py-8 text-center text-sm text-muted-foreground">还没有工单</div>
     </div>
 
-    <!-- 工单详情 -->
-    <pre v-if="detailOpen" class="max-h-[30vh] overflow-y-auto whitespace-pre-wrap rounded-lg border bg-muted/40 p-3 text-xs leading-relaxed">{{ detail }}</pre>
+    <!-- 工单详情弹窗 -->
+    <Dialog v-model:open="detailOpen">
+      <DialogContent class="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle class="text-sm">{{ detailTitle }}</DialogTitle>
+          <DialogDescription class="sr-only">工单详情</DialogDescription>
+        </DialogHeader>
+        <pre class="max-h-[55vh] overflow-y-auto whitespace-pre-wrap text-xs leading-relaxed text-foreground">{{ detailText }}</pre>
+      </DialogContent>
+    </Dialog>
 
     <CreateOrderDialog
       v-model:open="createOpen"

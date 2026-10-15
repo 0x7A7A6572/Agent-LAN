@@ -59,7 +59,7 @@ function toggle(id: string) {
             <GripVertical class="h-4 w-4 opacity-0 transition-opacity group-hover:opacity-100" />
           </TableCell>
           <TableCell>
-            <button v-if="hasChildren(order.id)" class="text-muted-foreground hover:text-foreground" @click="toggle(order.id)">
+            <button v-if="hasChildren(order.id)" class="text-muted-foreground hover:text-foreground" aria-label="展开/收起子工单" @click="toggle(order.id)">
               <ChevronDown v-if="expanded[order.id]" class="h-4 w-4" />
               <ChevronRight v-else class="h-4 w-4" />
             </button>
@@ -107,7 +107,8 @@ function toggle(id: string) {
             </DropdownMenu>
           </TableCell>
         </TableRow>
-        <!-- 子工单：缩进行 -->
+        <!-- 子工单：缩进行（仅展开时渲染） -->
+        <template v-if="expanded[order.id]">
         <TableRow v-for="child in childrenOf(order.id)" :key="child.id" class="bg-muted/30">
           <TableCell class="text-muted-foreground/50">
             <GripVertical class="h-4 w-4 opacity-0 transition-opacity group-hover:opacity-100" />
@@ -141,6 +142,7 @@ function toggle(id: string) {
           </TableCell>
           <TableCell />
         </TableRow>
+        </template>
       </template>
       <TableRow v-if="!orders.length">
         <TableCell colspan="8" class="h-24 text-center text-muted-foreground">还没有工单</TableCell>
