@@ -7,7 +7,7 @@ import type { OrderStore } from "./orders.js";
 
 export interface McpFacadeDeps {
   /** 注册自己（心跳）；sourceIp 用于 inbound 节点自动分组 */
-  checkIn: (card: AgentCard, sourceIp?: string) => { ok: boolean; intervalMs: number };
+  checkIn: (card: AgentCard, sourceIp?: string) => { ok: boolean; conflictHost?: string; intervalMs: number; workerVersion?: string; guideUrl?: string };
   /** 领任务，超时返回 null */
   pullTask: (name: string, timeoutMs: number) => Promise<unknown>;
   /** 上报结果；by 为上报节点名，驱动执行中状态 */
@@ -21,7 +21,7 @@ export interface McpFacadeDeps {
   /** 给节点留言（人随时介入的通道） */
   sendMail: (to: string, text: string, from: string) => { ok: boolean };
   /** 活动触达：该节点还活着 */
-  touch: (name: string) => boolean;
+  touch: (name: string, mcp?: boolean) => boolean;
   /** 上传文件，返回局域网 URI */
   uploadFile: (name: string, dataBase64: string) => string;
   /** 读文件（base64） */
@@ -36,13 +36,15 @@ export interface McpFacadeDeps {
   orderList: (filter: Parameters<OrderStore["list"]>[0]) => Order[];
   /** 给工单挂产物文件 */
   orderAttach: (id: string, name: string, contentBase64: string, by: string) => FileRef;
+  /** 节点规范全文（agent-onboarding 同源） */
+  getGuide: () => string;
   log: (line: string, level?: "info" | "debug") => void;
 }
 
 const TOOLS = [
   {
     name: "mac_check_in",
-    description: "向 multi-agent-connect 主服务注册自己。40 秒内无任何活动判离线：长轮询 mac_pull_task 即算活动，无任务可领时也需每 30 秒内重调一次保活",
+    description: "向 multi-agent-connect 主服务注册自己。40 秒内无任何活动判离线：长轮询 mac_pull_task 即算活动，无任务可领时也需每 30 秒内重调一次保活。注册应答里的 guideUrl 是完整节点规范，新会话建议读一次；核心义务：开工/完成必须 mac_report 且带 name，工单改指派必须紧跟 mac_send_task 通知新节点",
     inputSchema: {
       type: "object",
       properties: {
@@ -68,7 +70,7 @@ const TOOLS = [
   },
   {
     name: "mac_report",
-    description: "上报任务执行结果。任务完成或失败时必须调用；执行中可先报 state=working 让控制台显示执行中",
+    description: "上报任务执行结果。必须带 name（不带则完成状态不写回工单、控制台不刷新）。工单任务开工时先报 state=working，完成报 completed，失败报 failed——不报等于白干",
     inputSchema: {
       type: "object",
       properties: {
@@ -183,7 +185,7 @@ const TOOLS = [
   },
   {
     name: "mac_order_update",
-    description: "改工单：状态推进、改处理人、改依赖等。每次变更记入 timeline。离开 backlog 时依赖必须全 done",
+    description: "改工单：状态推进、改处理人、改依赖等。每次变更记入 timeline。离开 backlog 时依赖必须全 done。改 assignee 后必须紧跟 mac_send_task 通知目标节点，否则对方永远收不到活",
     inputSchema: {
       type: "object",
       properties: {
@@ -216,6 +218,11 @@ const TOOLS = [
         priority: { type: "string" }
       }
     }
+  },
+  {
+    name: "mac_get_guide",
+    description: "获取节点完整行为规范（接入、心跳、上报、工单流转义务、文件通道）。新会话/不确定流程时调用一次",
+    inputSchema: { type: "object", properties: {} }
   },
   {
     name: "mac_order_attach",
@@ -318,14 +325,20 @@ export async function mcpHandle(raw: string, req: http.IncomingMessage, res: htt
               capabilities: { streaming: false, adapters: ["mcp"] }
             };
             const r = deps.checkIn(card, sourceIp);
+            if (r.conflictHost) {
+              deps.log("[!] 节点名冲突: " + card.name + " 已注册于主机 " + r.conflictHost);
+              replyError(-32002, "节点名 " + card.name + " 已被主机 " + r.conflictHost +
+                " 的节点占用，请换一个 name 重新注册（同机多实例时 NAME 必须各不相同）");
+              return;
+            }
             deps.log("++ " + card.name + " checked in via MCP", "debug");
-            reply(toolResult({ ok: r.ok, heartbeatMs: r.intervalMs, offlineAfterMs: 40000, yourName: card.name }));
+            reply(toolResult({ ok: r.ok, heartbeatMs: r.intervalMs, offlineAfterMs: 40000, yourName: card.name, workerVersion: r.workerVersion, guideUrl: r.guideUrl }));
             return;
           }
           case "mac_pull_task": {
             // 调用者身份：必须与 check_in 注册的节点名一致，拒绝匿名领活
             const caller = String(a.name ?? "");
-            if (!caller || !deps.touch(caller)) {
+            if (!caller || !deps.touch(caller, true)) {
               replyError(-32001, "未知节点: " + (caller || "缺少 name") + "，请先 mac_check_in 注册");
               return;
             }
@@ -336,6 +349,7 @@ export async function mcpHandle(raw: string, req: http.IncomingMessage, res: htt
           }
           case "mac_report": {
             // name 可选：带上才能即时刷新执行中状态（与 pull 的 name 一致）
+            if (a.name) deps.touch(String(a.name), true);
             const files = (a.files ?? []).map((f: { name: string; contentBase64: string }) => ({
               name: f.name,
               uri: deps.uploadFile(f.name, f.contentBase64)
@@ -372,6 +386,10 @@ export async function mcpHandle(raw: string, req: http.IncomingMessage, res: htt
             reply(toolResult(data !== undefined
               ? { contentBase64: data }
               : { error: "文件不存在: " + a.storedName }));
+            return;
+          }
+          case "mac_get_guide": {
+            reply(toolResult({ guide: deps.getGuide() }));
             return;
           }
           case "mac_order_create": {
