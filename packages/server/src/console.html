@@ -55,7 +55,10 @@
   .online .dot { background: #3fb950; box-shadow: 0 0 6px #3fb950; }
   .offline .dot { background: #6e7681; }
   .agent .url { font-size: 12px; color: #8b949e; word-break: break-all; }
-  .agent .meta { font-size: 11px; color: #6e7681; margin-top: 4px; }
+  .agent .meta {
+    font-size: 11px; color: #6e7681; margin-top: 4px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
   .agent .badge {
     font-size: 10px; padding: 1px 6px; border-radius: 10px;
     /* border: 1px solid #30363d; */ color: #8b949e; margin-left: auto;
@@ -454,8 +457,14 @@
       method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ name, role })
     }).then(r => r.json());
-    if (r.ok) appendLog("[role] " + name + " -> " + (r.role || "（无）"));
-    else appendLog("[role] 修改失败: " + r.error);
+    if (r.ok) {
+      appendLog("[role] " + name + " -> " + (r.role || "（无）"));
+      const c = cards.get(name);
+      if (c) {
+        c.role.textContent = r.role || "设角色";
+        c.role.classList.toggle("has", !!r.role);
+      }
+    } else appendLog("[role] 修改失败: " + r.error);
   }
 
   // ---------- 视图切换 ----------
