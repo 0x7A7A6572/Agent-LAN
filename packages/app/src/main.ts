@@ -24,6 +24,7 @@ const adapter = adapters[adapterKind]?.() ?? adapters.claude();
 
 const card: AgentCard = {
   name: agentName,
+  isMainNode: true,
   description: "multi-agent-connect 节点 (" + adapterKind + ")",
   url: "http://0.0.0.0:" + port,
   version: "0.0.1",
@@ -48,6 +49,8 @@ async function pollPresence() {
 
 createServer({
   card, adapter, port,
+  // hub 是基础设施不是 agent，不进名册；给它派活省略 target 即本机执行
+  selfRegister: false,
   onLog: line => { tui?.(line); }
 }).listen(port, async () => {
   tui = createTui({ selfName: agentName, port, getPresences: () => presences });

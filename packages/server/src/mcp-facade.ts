@@ -30,7 +30,7 @@ export interface McpFacadeDeps {
 const TOOLS = [
   {
     name: "mac_check_in",
-    description: "向 multi-agent-connect 主服务注册自己（每次会话开始时调用一次，之后由服务端保活）",
+    description: "向 multi-agent-connect 主服务注册自己。40 秒内无任何活动判离线：长轮询 mac_pull_task 即算活动，无任务可领时也需每 30 秒内重调一次保活",
     inputSchema: {
       type: "object",
       properties: {
@@ -44,12 +44,14 @@ const TOOLS = [
   },
   {
     name: "mac_pull_task",
-    description: "领取派给本节点名的任务。无任务时最多等待 waitMs 毫秒后返回空。定期调用即可持续接活",
+    description: "领取派给本节点名的任务。无任务时最多等待 waitMs 毫秒后返回空。定期调用即可持续接活，长轮询挂起期间在线状态自动保持",
     inputSchema: {
       type: "object",
       properties: {
+        name: { type: "string", description: "你的节点名，必须与 mac_check_in 注册的 name 一致" },
         waitMs: { type: "number", description: "无任务时最长等待毫秒数，默认 20000，最大 25000" }
-      }
+      },
+      required: ["name"]
     }
   },
   {
@@ -175,11 +177,11 @@ export async function mcpHandle(raw: string, req: http.IncomingMessage, res: htt
   const id = msg.id ?? null;
   const reply = (result: unknown) => {
     if (id === null) { res.writeHead(202); res.end(); return; }
-    res.writeHead(200, { "content-type": "application/json" });
+    res.writeHead(200, { "content-type": "application/json", connection: "close" });
     res.end(JSON.stringify({ jsonrpc: "2.0", id, result }));
   };
   const replyError = (code: number, message: string) => {
-    res.writeHead(200, { "content-type": "application/json" });
+    res.writeHead(200, { "content-type": "application/json", connection: "close" });
     res.end(JSON.stringify({ jsonrpc: "2.0", id, error: { code, message } }));
   };
 
@@ -220,16 +222,18 @@ export async function mcpHandle(raw: string, req: http.IncomingMessage, res: htt
             };
             const r = deps.checkIn(card, sourceIp);
             deps.log("++ " + card.name + " checked in via MCP");
-            reply(toolResult({ ok: r.ok, heartbeatMs: r.intervalMs, yourName: card.name }));
+            reply(toolResult({ ok: r.ok, heartbeatMs: r.intervalMs, offlineAfterMs: 40000, yourName: card.name }));
             return;
           }
           case "mac_pull_task": {
-            // MCP 工具调用者身份：优先取参数里的 name（多 agent 共用一份配置时各自传自己的名字）
-            const caller = String(a.name ?? "unknown");
-            deps.touch(caller);
+            // 调用者身份：必须与 check_in 注册的节点名一致，拒绝匿名领活
+            const caller = String(a.name ?? "");
+            if (!caller || !deps.touch(caller)) {
+              replyError(-32001, "未知节点: " + (caller || "缺少 name") + "，请先 mac_check_in 注册");
+              return;
+            }
             const waitMs = Math.min(Number(a.waitMs) || 20000, 25000);
             const r = await deps.pullTask(caller, waitMs) as { task: unknown; messages?: unknown[] };
-            deps.touch(caller);
             reply(toolResult({ task: r?.task ?? null, messages: r?.messages ?? [] }));
             return;
           }

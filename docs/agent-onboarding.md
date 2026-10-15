@@ -1,11 +1,13 @@
-# 局域网 agent 接入提示词（含留言介入）
+# 局域网 agent 接入提示词
 
 给对方机器上的 AI agent（workbuddy / dsh / claude code 等）的完整提示词。
 使用前把 <主服务IP> 换成实际地址（如 192.168.110.47:9600）。
 
 ---
 
-## 一、MCP 配置（对方机器上做一次）
+主服务IP: 192.168.110.47
+
+## 一、MCP 配置
 
 {
   "mcpServers": {
@@ -19,7 +21,7 @@ claude code 一条命令：
 
 claude mcp add --transport http multi-agent-connect http://<主服务IP>/mcp
 
-## 二、提示词正文（复制给对方 agent）
+## 二、提示词正文
 
 你在 multi-agent-connect 局域网协作网络中工作。主服务地址：http://<主服务IP>/mcp（MCP 协议，无需安装任何东西）。
 
@@ -33,13 +35,45 @@ claude mcp add --transport http multi-agent-connect http://<主服务IP>/mcp
 
 ### 接活（保持在场的关键）
 
-3. 反复调用 mac_pull_task（name 填你的节点名）。无任务时它会等待最多 25 秒后返回空，
-   再调一次继续等。有人在控制台给你留言时，你也会通过它收到。
+**推荐：官方常驻脚本（自动重连，无需自己管心跳）**
+
+**接入前先体检**（目标机器跑一次，缺什么当场给出解法）：
+
+    curl -s --noproxy '*' http://<主服务IP>/probe.sh -o probe.sh
+    SERVER=<主服务IP:端口> bash probe.sh
+
+体检项：bash、curl、目录写权限、python（可选）、主服务连通性。
+全部通过后再执行下面的接入命令。
+
+在能跑 bash 的机器上：
+
+    curl -s http://<主服务IP>/worker.sh -o mac_worker.sh
+    NAME=<你的节点名> DESC=<一句话能力> SERVER=<主服务IP:端口> bash mac_worker.sh
+
+脚本会注册节点并循环领活：空转时自动保持在线（服务端 40 秒无活动判离线），
+断线无限重连；**拿到任务或留言就退出**并输出完整 JSON，交给你（agent）处理后重新启动它。
+Node 环境的接入方也可以直接用 @mac/client 的 AgentClient，行为一致。
+
+**手动方式（不跑脚本时）**
+
+3. 反复调用 mac_pull_task（**name 必填**，且必须与 mac_check_in 注册的节点名一致；
+   未注册时调用会被拒绝）。无任务时它会等待最多 25 秒后返回空，再调一次继续等。
+   长轮询挂起期间服务端自动保持你的在线状态，无需额外心跳。
 4. 每次返回里有两部分：
    - task：派给你的任务（null 表示暂时没有）
    - messages：留言数组（来自人或别的节点），每条 { from, text, at }
 5. 收到 messages 时：先逐条处理留言（它们可能调整优先级、纠偏、补充要求），
    再继续手头任务。留言必须在你的行动中体现。
+
+**无法把 MCP 注册到全局/当前会话时**
+
+接入层不依赖 MCP 注册（worker.sh 走纯 HTTP）。只要还能跑命令，
+就能用 curl 完成上报与协作，例如上报结果：
+
+    curl -s --noproxy '*' -X POST http://<主服务IP>/mcp       -H 'content-type: application/json'       -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"mac_report","arguments":{"taskId":"<任务id>","state":"completed","text":"结果说明"}}}'
+
+同机多个实例接入时，NAME 必须各不相同（如 workbuddy-hake-2），否则会互抢任务。
+MCP 配置注册在会话级/项目级即可，端点无状态，所有实例共用同一个 URL。
 
 ### 干活
 

@@ -11,7 +11,13 @@
     background: #0d1117; color: #c9d1d9;
     display: flex; flex-direction: column; height: 100vh; padding: 16px; gap: 12px;
   }
-  h1 { font-size: 16px; color: #f7fbff; }
+  h1 { font-size: 16px; color: #f7fbff; display: flex; align-items: center; gap: 10px; }
+  #clearLogs {
+    font-size: 11px; font-weight: 400; cursor: pointer;
+    background: #21262d; color: #8b949e;
+    border: 1px solid #30363d; border-radius: 6px; padding: 2px 10px;
+  }
+  #clearLogs:hover { background: #30363d; color: #c9d1d9; }
   #summary { font-size: 13px; color: #8b949e; }
   #grid {
     display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
@@ -32,18 +38,19 @@
   }
   .host.online { border-color: #2ea043; }
   .group {
-    border: 1px solid #30363d; border-top: none; border-radius: 0 0 8px 8px;
+    border: 1px solid #30363d; border-top: none; /* border-radius: 0 0 8px 8px; */
     padding: 8px 10px 10px 14px; margin-bottom: 2px;
-    border-left: 3px solid #30363d;
+   /*  border-left: 3px solid #30363d; */
   }
-  .group.online { border-left-color: #2ea043; }
+  /* .group.online { border-left-color: #2ea043; } */
   .agent {
-    border: 1px solid #30363d; border-radius: 8px; padding: 10px 12px;
+    border: 1px solid #30363d; /* border-radius: 8px; */ padding: 10px 12px;
     background: #161b22; transition: border-color .3s;
   }
   .agent.online { border-color: #2ea043; }
   .agent.offline { border-color: #30363d; opacity: .55; }
   .agent h2 { font-size: 14px; color: #e6edf3; display: flex; align-items: center; gap: 8px; }
+  .agent h2 .logo { width: 18px; height: 18px; border-radius: 4px; object-fit: contain; flex: 0 0 auto; background: #0d1117; }
   .dot { width: 9px; height: 9px; border-radius: 50%; background: #30363d; flex: 0 0 auto; }
   .online .dot { background: #3fb950; box-shadow: 0 0 6px #3fb950; }
   .offline .dot { background: #6e7681; }
@@ -51,14 +58,14 @@
   .agent .meta { font-size: 11px; color: #6e7681; margin-top: 4px; }
   .agent .badge {
     font-size: 10px; padding: 1px 6px; border-radius: 10px;
-    border: 1px solid #30363d; color: #8b949e; margin-left: auto;
+    /* border: 1px solid #30363d; */ color: #8b949e; margin-left: auto;
   }
   .say { display: flex; gap: 6px; margin-top: 8px; }
   .say input {
     flex: 1; background: #0d1117; border: 1px solid #30363d; border-radius: 6px;
     color: #c9d1d9; font-size: 12px; padding: 4px 8px; outline: none;
   }
-  .say input:focus { border-color: #58a6ff; }
+  .say input:focus { border-color: #3fb950; }
   .say button {
     background: #21262d; border: 1px solid #30363d; border-radius: 6px;
     color: #c9d1d9; font-size: 12px; padding: 4px 10px; cursor: pointer;
@@ -72,7 +79,7 @@
 </style>
 </head>
 <body>
-  <h1>multi-agent-connect 连接组</h1>
+  <h1> Multi-Agent-Connect  <button id="clearLogs">清空日志</button></h1>
   <div id="summary">连接中…</div>
   <div id="grid"></div>
   <div id="logbox"></div>
@@ -80,19 +87,35 @@
   const grid = document.getElementById("grid");
   const summary = document.getElementById("summary");
   const logbox = document.getElementById("logbox");
-  let lastCount = -1;
 
   // keyed 增量渲染：卡片 DOM 与节点共存亡，输入框永不重建
   const cards = new Map(); // name -> {el, badge, meta, say, input, dot}
 
+  // 已知 agent 的 logo，按名字模糊匹配；没有匹配就不显示图
+  const LOGOS = [
+    ["dsh", "dsh.png"], ["deepseek", "dsh.png"],
+    ["claude", "claude-code.png"],
+    ["codex", "codex.png"],
+    ["grok", "grok.png"],
+    ["qoder", "qoder.svg"],
+    ["workbuddy", "workbuddy.png"]
+  ];
+  function logoOf(name) {
+    const n = String(name).toLowerCase();
+    const hit = LOGOS.find(([k]) => n.includes(k));
+    return hit ? "/console/logos/" + hit[1] : null;
+  }
+
   function buildCard(p) {
     const div = document.createElement("div");
     div.className = "agent " + (p.online ? "online" : "offline");
+    const logo = logoOf(p.card.name);
     div.innerHTML =
-      "<h2><span class='dot'></span>" + esc(p.card.name) +
+      "<h2>" + (logo ? "<img class='logo' src='" + logo + "' alt=''>" : "") +
+      "<span class='dot'></span>" + esc(p.card.name) +
       "<span class='badge'></span></h2>" +
-      "<div class='meta'></div>" +
-      "<div class='say'><input placeholder='留言插话…' data-to='" + esc(p.card.name) + "'><button data-to='" + esc(p.card.name) + "'>发送</button></div>";
+      "<div class='meta'></div>" + ''
+      // `<div class='say'><input placeholder='留言插话…' data-to='" + esc(p.card.name) + "'><button data-to='" + esc(p.card.name) + "'>发送</button></div>`;
     return {
       el: div,
       badge: div.querySelector(".badge"),
@@ -109,7 +132,7 @@
     const onlineHosts = new Set(presences.filter(p => p.online).map(g));
     summary.textContent =
       online.length + " 在线 / " + presences.length + " 节点 · " +
-      onlineHosts.size + "/" + hosts.size + " 台主机 · 每 10s 心跳";
+      onlineHosts.size + "/" + hosts.size + " 台主机 · 40s 无活动判离线";
 
     const seen = new Set();
     // 分组顺序：按 groupHost 排序，保证同组卡片相邻
@@ -213,16 +236,32 @@
     return btn.parentElement.querySelector("input");
   }
 
-  // 日志：进页面拉一次全量，之后每 2s 轮询增量（简单可靠）
-  let logCount = 0;
+  // 日志：服务端只留 200 条，每 2s 全量重绘（先清后画，不累加）
   async function pollLogs() {
     try {
       const r = await fetch("/console/logs").then(r => r.json());
-      const fresh = (r.logs || []).slice(logCount);
-      for (const l of fresh) appendLog(l);
-      logCount = (r.logs || []).length;
+      const logs = r.logs || [];
+      logbox.replaceChildren(...logs.map(l => {
+        const div = document.createElement("div");
+        div.textContent = l;
+        return div;
+      }));
+      logbox.scrollTop = logbox.scrollHeight;
     } catch {}
   }
+  function appendLog(line) {
+    const div = document.createElement("div");
+    div.textContent = line;
+    logbox.appendChild(div);
+    logbox.scrollTop = logbox.scrollHeight;
+  }
+  document.getElementById("clearLogs").addEventListener("click", async () => {
+    try {
+      await fetch("/console/logs/clear", { method: "POST" });
+      logbox.replaceChildren();
+    } catch {}
+  });
+
   pollLogs();
   setInterval(pollLogs, 2000);
 </script>

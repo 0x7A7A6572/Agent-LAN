@@ -152,10 +152,12 @@ export function createServer(options: ServerOptions): http.Server {
     };
     tasks.set(task.id, task);
 
-    // target 指向其他节点 → 换用远端代理执行；不带 target → 本机 adapter
+    // target 指向其他节点 → 换用远端代理执行；不带 target 或指 hub 本名 → 本机 adapter
     const target: string | undefined = params?.target;
     let adapter = options.adapter;
-    if (target && target !== options.card.name) {
+    if (target && target === options.card.name) {
+      log("-> task " + task.id.slice(0, 8) + " local (hub) : " + prompt.slice(0, 60));
+    } else if (target) {
       const presence = registry.find(target);
       if (presence?.baseUrl) {
         adapter = createRemoteProxy({ baseUrl: presence.baseUrl, targetName: target });
@@ -233,10 +235,11 @@ export function createServer(options: ServerOptions): http.Server {
         const to = String(params?.to ?? "");
         const text = String(params?.text ?? "");
         if (!to || !text) throw { code: -32602, message: "缺少 to 或 text" };
+        if (to === options.card.name) throw { code: -32602, message: to + " 是主服务本体，不收留言；给它的指令请在会话里直接说" };
         if (!registry.find(to)) throw { code: -32602, message: "目标不在线或未知: " + to };
         if (!mailboxes.has(to)) mailboxes.set(to, []);
         mailboxes.get(to)!.push({ text, from: String(params?.from ?? remote), at: new Date().toISOString() });
-        log("[mail] -> " + to + ": " + text.slice(0, 50));
+        log("[mail] -> " + to + ": " + text.slice(0, 2000));
         return { ok: true };
       }
       case A2A_METHODS.TASK_GET:
@@ -265,12 +268,30 @@ export function createServer(options: ServerOptions): http.Server {
     return fs.readFileSync(tpl, "utf8");
   }
 
+  // 官方接入脚本：节点一条命令下载，规则统一由服务端维护
+  function workerScript(): string {
+    const tpl = path.join(path.dirname(fileURLToPath(import.meta.url)), "worker.sh");
+    return fs.readFileSync(tpl, "utf8");
+  }
+
+  // 接入体检脚本：目标机器自检 bash/curl/写权限/网络
+  function probeScript(): string {
+    const tpl = path.join(path.dirname(fileURLToPath(import.meta.url)), "probe.sh");
+    return fs.readFileSync(tpl, "utf8");
+  }
+
+  // 安装提示词：与 docs/agent-onboarding.md 同源，构建时拷贝
+  function installMd(): string {
+    const tpl = path.join(path.dirname(fileURLToPath(import.meta.url)), "install.md");
+    return fs.readFileSync(tpl, "utf8");
+  }
+
   const httpServer = http.createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
     const remote = remoteOf(req);
 
     if (req.method === "GET" && url.pathname === AGENT_CARD_PATH) {
-      res.writeHead(200, { "content-type": "application/json" });
+      res.writeHead(200, { "content-type": "application/json", connection: "close" });
       res.end(JSON.stringify(options.card));
       return;
     }
@@ -283,7 +304,7 @@ export function createServer(options: ServerOptions): http.Server {
       }
       const timeoutMs = Math.min(Number(url.searchParams.get("timeout")) || PULL_TIMEOUT_MS, 55000);
       const task = await pullTask(name, timeoutMs);
-      res.writeHead(200, { "content-type": "application/json" });
+      res.writeHead(200, { "content-type": "application/json", connection: "close" });
       res.end(JSON.stringify({ task, messages: dropMail(name) }));
       return;
     }
@@ -292,7 +313,7 @@ export function createServer(options: ServerOptions): http.Server {
       for await (const chunk of req) body += chunk;
       const { taskId, state, text, artifacts } = JSON.parse(body);
       const ok = reportResult(taskId, state ?? "completed", text, artifacts);
-      res.writeHead(200, { "content-type": "application/json" });
+      res.writeHead(200, { "content-type": "application/json", connection: "close" });
       res.end(JSON.stringify({ ok }));
       return;
     }
@@ -317,6 +338,31 @@ export function createServer(options: ServerOptions): http.Server {
       res.end(consoleHtml());
       return;
     }
+    if (req.method === "GET" && url.pathname.startsWith("/console/logos/")) {
+      const name = path.basename(url.pathname.slice("/console/logos/".length));
+      const file = path.join(path.dirname(fileURLToPath(import.meta.url)), "logos", name);
+      if (!fs.existsSync(file)) { res.writeHead(404); res.end(); return; }
+      const ext = path.extname(name).toLowerCase();
+      const type = ext === ".svg" ? "image/svg+xml" : ext === ".png" ? "image/png" : "application/octet-stream";
+      res.writeHead(200, { "content-type": type, "cache-control": "max-age=86400" });
+      res.end(fs.readFileSync(file));
+      return;
+    }
+    if (req.method === "GET" && url.pathname === "/worker.sh") {
+      res.writeHead(200, { "content-type": "text/x-shellscript; charset=utf-8" });
+      res.end(workerScript());
+      return;
+    }
+    if (req.method === "GET" && url.pathname === "/probe.sh") {
+      res.writeHead(200, { "content-type": "text/x-shellscript; charset=utf-8" });
+      res.end(probeScript());
+      return;
+    }
+    if (req.method === "GET" && url.pathname === "/mcp/install.md") {
+      res.writeHead(200, { "content-type": "text/markdown; charset=utf-8" });
+      res.end(installMd());
+      return;
+    }
     if (req.method === "GET" && url.pathname === "/console/presence/stream") {
       res.writeHead(200, {
         "content-type": "text/event-stream",
@@ -329,8 +375,15 @@ export function createServer(options: ServerOptions): http.Server {
       return;
     }
     if (req.method === "GET" && url.pathname === "/console/logs") {
-      res.writeHead(200, { "content-type": "application/json" });
+      res.writeHead(200, { "content-type": "application/json", connection: "close" });
       res.end(JSON.stringify({ logs }));
+      return;
+    }
+    if (req.method === "POST" && url.pathname === "/console/logs/clear") {
+      logs.length = 0;
+      res.writeHead(200, { "content-type": "application/json", connection: "close" });
+      res.end(JSON.stringify({ ok: true }));
+      log("[console] 日志已清空");
       return;
     }
     if (url.pathname === "/mcp") {
@@ -372,7 +425,7 @@ export function createServer(options: ServerOptions): http.Server {
           localAddress: req.socket.localAddress,
           localPort: req.socket.localPort
         });
-        res.writeHead(200, { "content-type": "application/json" });
+        res.writeHead(200, { "content-type": "application/json", connection: "close" });
         res.end(JSON.stringify({ jsonrpc: "2.0", id: rpc.id, result }));
       } catch (err: any) {
         const e = err?.code ? err : { code: -32000, message: String(err) };
