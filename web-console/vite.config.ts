@@ -5,7 +5,9 @@ import vue from '@vitejs/plugin-vue'
 import vueDevTools from 'vite-plugin-vue-devtools'
 import tailwindcss from '@tailwindcss/vite'
 
-// https://vite.dev/config/
+// hub 地址可用 MAC_HUB 覆盖，缺省 9600
+const hub = process.env.MAC_HUB ?? 'http://localhost:9600'
+
 export default defineConfig({
   plugins: [vue(), vueDevTools(), tailwindcss()],
   resolve: {
@@ -14,13 +16,13 @@ export default defineConfig({
     },
   },
   server: {
-    // 控制台资源与 A2A JSON-RPC 都来自 hub，dev 时全量代理
+    // 控制台资源与 A2A JSON-RPC 都来自 hub，dev/preview 全量代理
     proxy: {
-      '/console': 'http://localhost:9600',
-      '/agent': 'http://localhost:9600',
-      '/files': 'http://localhost:9600',
-      '/worker.sh': 'http://localhost:9600',
-      '/probe.sh': 'http://localhost:9600',
+      '/console': hub,
+      '/agent': hub,
+      '/files': hub,
+      '/worker.sh': hub,
+      '/probe.sh': hub,
     },
   },
 })
