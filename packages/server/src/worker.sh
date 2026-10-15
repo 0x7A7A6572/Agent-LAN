@@ -5,9 +5,13 @@
 #   curl -s http://<主服务IP>/worker.sh -o mac_worker.sh
 #   NAME=<节点名> DESC=<一句话能力> SERVER=<主服务IP:端口> bash mac_worker.sh
 #
-# 行为: 拿到任务或留言后退出并输出完整 JSON，交上层 agent 处理；
-#       空转/断线则常驻循环，无限重试。
+# 行为: 拿到任务或留言后输出完整 JSON 交上层 agent 处理后退出；
+#       退出时留一个伴生后台心跳（每 20s check_in，最长 2h）保持节点在线
+#       直到上层 agent 调 mac_report；空转/断线则常驻循环，无限重试。
 # 依赖: curl；python/python3 可选（无则用纯 grep 判别）
+# 版本由 hub 构建时按脚本内容哈希注入，节点据此自动更新
+
+WORKER_VERSION=__VERSION__
 
 NAME=${NAME:-worker-$(hostname)}
 DESC=${DESC:-general worker}
@@ -20,6 +24,29 @@ UNREACH=0
 OK=0
 
 log() { echo "[$(date '+%H:%M:%S')] $*" >&2; }
+
+# 自更新：hub 版本与本地不一致时拉新脚本，校验后原子替换并 exec 重启
+# 仅对落盘运行的脚本生效；curl|bash 直跑无可替换文件，跳过并提示
+self_update() {
+  local ver="$1"
+  [ -f "$NEWF" ] && rm -f "$NEWF"
+  if ! curl -s --max-time 15 "http://$SERVER/worker.sh" -o "$NEWF" || [ ! -s "$NEWF" ]; then
+    log "[!] 自更新下载失败，沿用当前版本继续"; return 0
+  fi
+  grep -q 'WORKER_VERSION=' "$NEWF" && grep -q 'mac_check_in' "$NEWF" || {
+    log "[!] 自更新内容校验不过（非 worker 脚本），放弃"; rm -f "$NEWF"; return 0
+  }
+  local nv
+  nv=$(grep -m1 'WORKER_VERSION=' "$NEWF" | sed 's/.*=//;s/"//g')
+  [ "$nv" = "$ver" ] && { rm -f "$NEWF"; return 0; }
+  if [ ! -w "$(dirname "$SELF")" ] || [ ! -w "$SELF" ]; then
+    log "[!] 脚本文件不可写，跳过自更新（版本 $ver -> $nv）"; rm -f "$NEWF"; return 0
+  fi
+  mv "$SELF" "$BAKF" && mv "$NEWF" "$SELF" || { log "[!] 替换失败，放弃自更新"; rm -f "$NEWF"; return 0; }
+  chmod --reference="$BAKF" "$SELF" 2>/dev/null || chmod +x "$SELF" 2>/dev/null
+  log "[↑] 已更新到版本 $nv，重启脚本（旧版存于 $BAKF）"
+  exec bash "$SELF"
+}
 
 # MCP 工具调用: 先 initialize 拿会话，再 tools/call
 mcp_call() {
@@ -40,6 +67,11 @@ mcp_call() {
 for i in $(seq 1 $MAX); do
   # ---------- 1) 注册/心跳（每次循环续命，40s 无活动判离线） ----------
   HB=$(mcp_call mac_check_in "{\"name\":\"$NAME\",\"description\":\"$DESC\"}")
+  if echo "$HB" | grep -q '节点名 .* 已被主机'; then
+    log "[x] 节点名冲突：$(echo "$HB" | grep -o '节点名 [^"]*')"
+    log "[x] 请停掉本脚本，换一个 NAME 重新启动（同机多实例 NAME 必须各不相同）"
+    exit 1
+  fi
   if ! echo "$HB" | grep -q 'ok\\\?": *true'; then
     UNREACH=$((UNREACH+1))
     if [ $((UNREACH % 10)) -eq 1 ]; then
@@ -51,6 +83,13 @@ for i in $(seq 1 $MAX); do
   if [ "$UNREACH" -gt 0 ]; then
     log "[✓] 主服务已恢复（期间不可达 ${UNREACH} 次）"
     UNREACH=0
+  fi
+
+  # ---------- 1.5) 版本检查：hub 版本不同则自更新并重启 ----------
+  HV=$(echo "$HB" | grep -o '"workerVersion":"[^"]*"' | cut -d'"' -f4)
+  if [ -n "$HV" ] && [ "$HV" != "$WORKER_VERSION" ] && [ -f "${BASH_SOURCE[0]}" ]; then
+    log "[↑] 发现新版本 $HV（当前 $WORKER_VERSION），开始自更新"
+    self_update "$HV"
   fi
 
   # ---------- 2) 领活（必须带 name，长轮询挂起期间服务端保活） ----------
@@ -98,6 +137,14 @@ else: print('EMPTY')
   elif [ "$KIND" = "TASK" ] || [ "$KIND" = "MSG" ]; then
     log "===== 命中 $KIND（上报结果时务必带 name=$NAME，完成后才能解除执行中状态） ====="
     echo "$OUT"
+    # 执行期心跳：伴生后台进程续命，脚本本体照常退出交付任务
+    # 有界 20s×360=2h，与服务端 busy 豁免上限一致，防伴生进程堆积
+    (
+      for i in $(seq 1 360); do
+        sleep 20
+        mcp_call mac_check_in "{\"name\":\"$NAME\",\"description\":\"$DESC\"}" >/dev/null 2>&1 || true
+      done
+    ) >/dev/null 2>&1 &
     exit 0
   fi
 done
