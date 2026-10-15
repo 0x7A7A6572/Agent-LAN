@@ -75,17 +75,24 @@ export function createServer(options: ServerOptions): http.Server {
       return task;
     }
     return new Promise<Task | null>((resolve) => {
+      // 等待期间连接还挂着：连接活着就算在线，5s 续一次
+      const keepAlive = setInterval(() => registry.touch(name), 5000);
+      keepAlive.unref?.();
+      const finish = (t: Task | null) => {
+        clearInterval(keepAlive);
+        resolve(t);
+      };
       const timer = setTimeout(() => {
         const waiters = pullWaiters.get(name) ?? [];
         const i = waiters.indexOf(wake);
         if (i >= 0) waiters.splice(i, 1);
-        resolve(null);
+        finish(null);
       }, timeoutMs);
       timer.unref?.();
       const wake = (task: Task) => {
         clearTimeout(timer);
         log("-> task " + task.id.slice(0, 8) + " pushed to " + name);
-        resolve(task);
+        finish(task);
       };
       if (!pullWaiters.has(name)) pullWaiters.set(name, []);
       pullWaiters.get(name)!.push(wake);
@@ -407,6 +414,7 @@ const mcpDeps: McpFacadeDeps = {
   },
   getTask: id => tasks.get(id) ?? { error: "任务不存在: " + id },
   listAgents: () => registry.list(),
+  touch: name => registry.touch(name),
   sendMail: (to, text, from) => {
     if (!registry.find(to)) return { ok: false };
     handleRpc("mailbox/send", { to, text, from }, "mcp", new URL("http://mcp.local"), { localAddress: "127.0.0.1", localPort: options.port });

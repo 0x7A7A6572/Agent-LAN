@@ -47,7 +47,8 @@ MAC_AGENT_NAME=node-1 MAC_ADAPTER=claude MAC_PORT=9600 pnpm --filter @mac/app st
 ### 心跳协议
 
 - 节点每 10s 调任意节点的 `presence/heartbeat`（params.card = AgentCard）
-- 15s 无心跳判离线，60s 无心跳移出名单
+- MCP 节点：任何 `mac_*` 工具调用都会刷新在线（含 pull 等待期间每 5s 自动续）
+- 40s 无活动判离线，5 分钟无活动移出名单
 - `presence/leave` 主动下线；`presence/list` 拉全量名册
 - 浏览器控制台走 `GET /console/presence/stream`（SSE）
 

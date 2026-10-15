@@ -18,6 +18,8 @@ export interface McpFacadeDeps {
   listAgents: () => unknown;
   /** 给节点留言（人随时介入的通道） */
   sendMail: (to: string, text: string, from: string) => { ok: boolean };
+  /** 活动触达：该节点还活着 */
+  touch: (name: string) => boolean;
   /** 上传文件，返回局域网 URI */
   uploadFile: (name: string, dataBase64: string) => string;
   /** 读文件（base64） */
@@ -207,6 +209,7 @@ export async function mcpHandle(raw: string, req: http.IncomingMessage, res: htt
       try {
         switch (name) {
           case "mac_check_in": {
+            // check_in 本身就是心跳
             const card: AgentCard = {
               name: String(a.name),
               description: [a.description, ...(a.abilities ?? [])].filter(Boolean).join(" · "),
@@ -223,8 +226,10 @@ export async function mcpHandle(raw: string, req: http.IncomingMessage, res: htt
           case "mac_pull_task": {
             // MCP 工具调用者身份：优先取参数里的 name（多 agent 共用一份配置时各自传自己的名字）
             const caller = String(a.name ?? "unknown");
+            deps.touch(caller);
             const waitMs = Math.min(Number(a.waitMs) || 20000, 25000);
             const r = await deps.pullTask(caller, waitMs) as { task: unknown; messages?: unknown[] };
+            deps.touch(caller);
             reply(toolResult({ task: r?.task ?? null, messages: r?.messages ?? [] }));
             return;
           }

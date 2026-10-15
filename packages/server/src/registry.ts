@@ -1,8 +1,8 @@
 // 局域网花名册：心跳注册与在线判定，供状态台查询
 import type { AgentCard, AgentPresence } from "@mac/sdk";
 
-const OFFLINE_AFTER_MS = 15000;
-const DEAD_AFTER_MS = 60000;
+const OFFLINE_AFTER_MS = 40000;
+const DEAD_AFTER_MS = 300000;
 
 export class Registry {
   private agents = new Map<string, AgentPresence>();
@@ -17,6 +17,15 @@ export class Registry {
       baseUrl: baseUrl === null ? undefined : (baseUrl ?? existing?.baseUrl)
     });
     return { reconnected: !existing?.online && !!existing };
+  }
+
+  /** 活动触达：仅刷新在线时间，不覆盖卡片 */
+  touch(name: string): boolean {
+    const p = this.agents.get(name);
+    if (!p) return false;
+    p.lastSeen = new Date().toISOString();
+    p.online = true;
+    return true;
   }
 
   /** 按名字查在线节点 */
