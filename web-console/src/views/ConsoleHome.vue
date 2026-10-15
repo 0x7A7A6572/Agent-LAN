@@ -178,8 +178,6 @@ function onStatusChange(id: string, status: OrderStatus) {
                 <Plus class="h-4 w-4" />
                 创建工单
               </Button>
-              <Button variant="outline" size="sm" @click="rolesOpen = true">角色库</Button>
-              <Button variant="outline" size="sm" @click="pmOpen = true">PM 说明书</Button>
             </div>
             <TabsContent v-for="t in statusTabs" :key="t.key" :value="t.key">
               <Card>
