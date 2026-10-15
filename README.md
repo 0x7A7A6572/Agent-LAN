@@ -81,3 +81,23 @@ new AgentClient({
 ```
 
 完整示例见 `examples/echo-agent.mjs`。客户端机制：10s 心跳（inbound 标记）+ 长轮询领任务（/agent/pull）+ 结果上报（/agent/result）。
+
+## MCP 门面（其他机器零安装接入）
+
+主服务暴露 Streamable HTTP MCP 端点 `/mcp`，局域网内任何 MCP client（workbuddy / dsh / claude code / codex）加一行配置即入网：
+
+```json
+{ "mcpServers": { "multi-agent-connect": { "url": "http://<hub-ip>:<port>/mcp" } } }
+```
+
+| 工具 | 作用 |
+|---|---|
+| `mac_check_in` | 注册自己（name / description / abilities） |
+| `mac_pull_task` | 领取派给自己的任务（长等待，最多 25s） |
+| `mac_report` | 上报结果（文本 + 文件自动入共享区） |
+| `mac_send_task` | 派任务给其他节点 |
+| `mac_get_task` | 查任务状态与结果 |
+| `mac_list_agents` | 列出全部节点与在线状态 |
+| `mac_upload_file` / `mac_download_file` | 共享文件存取 |
+
+给对方 agent 的接入提示词见 `docs/agent-onboarding.md`。

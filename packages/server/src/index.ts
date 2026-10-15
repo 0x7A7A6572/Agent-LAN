@@ -9,6 +9,7 @@ import { AGENT_CARD_PATH, A2A_METHODS } from "@mac/sdk";
 import { Registry } from "./registry.js";
 import { createRemoteProxy } from "./remote-proxy.js";
 import { FileChannel } from "./file-channel.js";
+import { mcpHandle, type McpFacadeDeps } from "./mcp-facade.js";
 export { createTui } from "./tui.js";
 export { createRemoteProxy } from "./remote-proxy.js";
 
@@ -56,6 +57,48 @@ export function createServer(options: ServerOptions): http.Server {
     }
   }
   const pullQueues: Map<string, Task[]> = new Map();
+
+  /** 领任务：队列有货立即出队，否则挂起等待；返回 null 表示超时空手 */
+  async function pullTask(name: string, timeoutMs: number): Promise<Task | null> {
+    const q = pullQueues.get(name);
+    if (q?.length) {
+      const task = q.shift()!;
+      log("-> task " + task.id.slice(0, 8) + " pulled by " + name);
+      return task;
+    }
+    return new Promise<Task | null>((resolve) => {
+      const timer = setTimeout(() => {
+        const waiters = pullWaiters.get(name) ?? [];
+        const i = waiters.indexOf(wake);
+        if (i >= 0) waiters.splice(i, 1);
+        resolve(null);
+      }, timeoutMs);
+      timer.unref?.();
+      const wake = (task: Task) => {
+        clearTimeout(timer);
+        log("-> task " + task.id.slice(0, 8) + " pushed to " + name);
+        resolve(task);
+      };
+      if (!pullWaiters.has(name)) pullWaiters.set(name, []);
+      pullWaiters.get(name)!.push(wake);
+    });
+  }
+
+  /** 客户端上报结果：更新任务并推送事件 */
+  function reportResult(taskId: string, state: string, text?: string, artifacts?: { name: string; uri: string }[]): boolean {
+    const t = tasks.get(taskId);
+    if (!t) return false;
+    t.state = state as Task["state"];
+    t.updatedAt = new Date().toISOString();
+    if (text) pushEvent(taskId, { kind: "message", text });
+    for (const a of artifacts ?? []) {
+      t.artifacts.push(a);
+      pushEvent(taskId, { kind: "artifact", artifact: a });
+    }
+    pushEvent(taskId, { kind: "status", status: { state: t.state, timestamp: t.updatedAt } });
+    log("[task] " + taskId.slice(0, 8) + " -> " + t.state + " (by agent)");
+    return true;
+  }
 
   const fileChannel = new FileChannel(options.filesDir ?? ".mac-files", "http://" + FileChannel.lanAddress() + ":" + options.port);
 
@@ -196,7 +239,7 @@ export function createServer(options: ServerOptions): http.Server {
     return fs.readFileSync(tpl, "utf8");
   }
 
-  return http.createServer(async (req, res) => {
+  const httpServer = http.createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
     const remote = remoteOf(req);
 
@@ -207,51 +250,24 @@ export function createServer(options: ServerOptions): http.Server {
     }
     if (req.method === "GET" && url.pathname === "/agent/pull") {
       const name = url.searchParams.get("name") ?? "";
-      const presence = registry.find(name);
-      if (!presence) { res.writeHead(404, { "content-type": "application/json" }); res.end(JSON.stringify({ error: "未注册: " + name })); return; }
-      const q = pullQueues.get(name);
-      if (q?.length) {
-        const task = q.shift()!;
-        res.writeHead(200, { "content-type": "application/json" });
-        res.end(JSON.stringify({ task }));
-        log("-> task " + task.id.slice(0, 8) + " pulled by " + name);
+      if (!registry.find(name)) {
+        res.writeHead(404, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "未注册: " + name }));
         return;
       }
-      // 长轮询挂起：等 enqueueFor 唤醒或超时空手返回
       const timeoutMs = Math.min(Number(url.searchParams.get("timeout")) || PULL_TIMEOUT_MS, 55000);
-      const timer = setTimeout(() => {
-        const waiters = pullWaiters.get(name) ?? [];
-        const i = waiters.indexOf(wake);
-        if (i >= 0) waiters.splice(i, 1);
-        res.writeHead(200, { "content-type": "application/json" });
-        res.end(JSON.stringify({ task: null }));
-      }, timeoutMs);
-      timer.unref?.();
-      const wake = (task: Task) => {
-        clearTimeout(timer);
-        res.writeHead(200, { "content-type": "application/json" });
-        res.end(JSON.stringify({ task }));
-        log("-> task " + task.id.slice(0, 8) + " pushed to " + name);
-      };
-      if (!pullWaiters.has(name)) pullWaiters.set(name, []);
-      pullWaiters.get(name)!.push(wake);
+      const task = await pullTask(name, timeoutMs);
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ task }));
       return;
     }
     if (req.method === "POST" && url.pathname === "/agent/result") {
       let body = "";
       for await (const chunk of req) body += chunk;
       const { taskId, state, text, artifacts } = JSON.parse(body);
-      const t = tasks.get(taskId);
-      if (t) {
-        t.state = state ?? "completed";
-        t.updatedAt = new Date().toISOString();
-        if (text) pushEvent(taskId, { kind: "message", text });
-        for (const a of artifacts ?? []) { t.artifacts.push(a); pushEvent(taskId, { kind: "artifact", artifact: a }); }
-        pushEvent(taskId, { kind: "status", status: { state: t.state, timestamp: t.updatedAt } });
-        log("[task] " + taskId.slice(0, 8) + " -> " + t.state + " (by client)");
-      }
+      const ok = reportResult(taskId, state ?? "completed", text, artifacts);
       res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify({ ok: !!t }));
+      res.end(JSON.stringify({ ok }));
       return;
     }
     if (req.method === "GET" && url.pathname.startsWith("/files/")) {
@@ -291,6 +307,12 @@ export function createServer(options: ServerOptions): http.Server {
       res.end(JSON.stringify({ logs }));
       return;
     }
+    if (req.method === "POST" && url.pathname === "/mcp") {
+      let body = "";
+      for await (const chunk of req) body += chunk;
+      await mcpRoute(body, req, res);
+      return;
+    }
     if (req.method === "POST" && url.pathname === "/") {
       let body = "";
       for await (const chunk of req) body += chunk;
@@ -324,4 +346,28 @@ export function createServer(options: ServerOptions): http.Server {
     res.writeHead(404);
     res.end();
   });
+
+  // MCP 门面绑线：把 server 内部能力以工具形式暴露
+const mcpDeps: McpFacadeDeps = {
+  checkIn: card => {
+    registry.heartbeat(card, null);
+    return { ok: true, intervalMs: 10000 };
+  },
+  pullTask: (name, ms) => pullTask(name, ms),
+  report: (taskId, state, text, artifacts) => reportResult(taskId, state, text, artifacts),
+  sendTask: async (prompt, target) => {
+    const r = await handleRpc("message/send", { prompt, target }, "mcp", new URL("http://mcp.local"), { localAddress: "127.0.0.1", localPort: options.port }) as { task: { id: string; state: string } };
+    return { taskId: r.task.id, state: r.task.state };
+  },
+  getTask: id => tasks.get(id) ?? { error: "任务不存在: " + id },
+  listAgents: () => registry.list(),
+  uploadFile: (name, dataBase64) => fileChannel.save(name, Buffer.from(dataBase64, "base64")),
+  downloadFile: storedName => fileChannel.open(storedName)?.toString("base64"),
+  log
+};
+function mcpRoute(body: string, req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  return mcpHandle(body, req, res, mcpDeps);
 }
+  return httpServer;
+}
+
