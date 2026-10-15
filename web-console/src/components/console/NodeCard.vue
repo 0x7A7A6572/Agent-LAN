@@ -55,7 +55,7 @@ async function send() {
 
 <template>
   <Card
-    class="flex flex-col gap-3 py-4 transition-colors"
+    class="flex flex-col gap-3 py-4 pb-1 transition-colors"
     :class="working ? 'border-blue-600/60' : presence.online ? '' : 'opacity-55'"
   >
     <CardHeader class="px-4">
@@ -77,7 +77,7 @@ async function send() {
       <p class="text-xs text-muted-foreground/70">心跳 {{ time }}</p>
     </CardHeader>
     <!-- 底部：设备分组 + 留言入口 -->
-    <CardContent class="mt-auto border-t px-4 pt-3">
+    <CardContent class="mt-auto border-t px-3 pt-1">
       <div class="flex items-center gap-1.5 text-xs text-muted-foreground">
         <Monitor class="h-3.5 w-3.5 shrink-0" />
         <span class="truncate" :title="group">{{ group }}</span>

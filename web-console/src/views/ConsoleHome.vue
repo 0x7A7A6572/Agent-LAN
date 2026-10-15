@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { Plus, Settings } from 'lucide-vue-next'
+import { ClipboardList, FileText, Plus, Settings, UserCog } from 'lucide-vue-next'
 import { useConsoleStore } from '@/stores/console'
 import { setNodeRole, saveRoles, savePmDoc } from '@/api/console'
 import CreateOrderDialog from '@/components/console/CreateOrderDialog.vue'
@@ -10,6 +10,7 @@ import LogPanel from '@/components/console/LogPanel.vue'
 import RolesDialog from '@/components/console/RolesDialog.vue'
 import RolePickDialog from '@/components/console/RolePickDialog.vue'
 import PmDialog from '@/components/console/PmDialog.vue'
+import InstallDialog from '@/components/console/InstallDialog.vue'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -27,6 +28,7 @@ import type { OrderStatus } from '@/types/console'
 const store = useConsoleStore()
 
 const rolesOpen = ref(false)
+const installOpen = ref(false)
 const pmOpen = ref(false)
 const pickOpen = ref(false)
 const pickName = ref('')
@@ -124,11 +126,22 @@ function onStatusChange(id: string, status: OrderStatus) {
               <Settings class="h-4 w-4" />
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" class="w-44">
+          <DropdownMenuContent align="end" class="w-48">
             <DropdownMenuLabel>设置</DropdownMenuLabel>
+            <DropdownMenuItem @click="rolesOpen = true">
+              <UserCog class="h-4 w-4" />
+              角色库
+            </DropdownMenuItem>
+            <DropdownMenuItem @click="pmOpen = true">
+              <ClipboardList class="h-4 w-4" />
+              PM 设定
+            </DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem @click="rolesOpen = true">角色库</DropdownMenuItem>
-            <DropdownMenuItem @click="pmOpen = true">PM 设定</DropdownMenuItem>
+            <DropdownMenuLabel>帮助</DropdownMenuLabel>
+            <DropdownMenuItem @click="installOpen = true">
+              <FileText class="h-4 w-4" />
+              安装说明
+            </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </span>
@@ -191,6 +204,7 @@ function onStatusChange(id: string, status: OrderStatus) {
       @create="onOrderCreate"
     />
     <PmDialog v-model:open="pmOpen" @save="onPmSave" />
+    <InstallDialog v-model:open="installOpen" />
     <RolePickDialog v-model:open="pickOpen" :roles="store.roles" :node-name="pickName" :current="pickCurrent" @pick="onPickConfirm" />
   </div>
 </template>
