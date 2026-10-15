@@ -79,4 +79,8 @@ export interface AgentPresence {
   baseUrl?: string;
   /** 分组用主机标识：卡片 host > 来源 IP > url 兜底（服务端算好） */
   groupHost: string;
+  /** 最近一次带 name 的 MCP 工具调用时刻；无则该节点只有心跳在跳 */
+  lastMcp?: string;
+  /** 90s 内有 MCP 工具调用 = agent 会话真实存活（读时计算） */
+  mcpActive?: boolean;
 }
