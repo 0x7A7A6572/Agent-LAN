@@ -1,4 +1,4 @@
-# multi-agent-connect
+# Agent-LAN
 
 LAN 内多 agent 互调服务。架构（已定，存于记忆库）：
 
@@ -88,7 +88,7 @@ new AgentClient({
 主服务暴露 Streamable HTTP MCP 端点 `/mcp`，局域网内任何 MCP client（workbuddy / dsh / claude code / codex）加一行配置即入网：
 
 ```json
-{ "mcpServers": { "multi-agent-connect": { "url": "http://<hub-ip>:<port>/mcp" } } }
+{ "mcpServers": { "Agent-LAN": { "url": "http://<hub-ip>:<port>/mcp" } } }
 ```
 
 | 工具 | 作用 |

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# multi-agent-connect 官方接入脚本（心跳+领活一体，断线自动重连）
+# Agent-LAN 官方接入脚本（心跳+领活一体，断线自动重连）
 #
 # 用法（在能跑 bash 的机器上）:
 #   curl -s http://<主服务IP>/worker.sh -o mac_worker.sh

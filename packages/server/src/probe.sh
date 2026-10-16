@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# multi-agent-connect 接入体检：一次跑完，缺什么当场告诉你
+# Agent-LAN 接入体检：一次跑完，缺什么当场告诉你
 # 用法: SERVER=<主服务IP:端口> bash probe.sh
 SERVER=${SERVER:?用法: SERVER=<主服务IP:端口> bash probe.sh}
 pass=0; fail=0
 ok() { echo "[通过] $1"; pass=$((pass+1)); }
 bad() { echo "[不通过] $1"; fail=$((fail+1)); }
 
-echo "== multi-agent-connect 接入体检 =="
+echo "== Agent-LAN 接入体检 =="
 
 # 1) bash 本身（能跑这个脚本就说明有）
 ok "bash 可用（$(bash --version | head -1 | cut -d ' ' -f1-3)）"

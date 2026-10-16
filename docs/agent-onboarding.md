@@ -12,7 +12,7 @@
 
 {
   "mcpServers": {
-    "multi-agent-connect": {
+    "Agent-LAN": {
       "url": "http://<主服务IP>/mcp"
     }
   }
@@ -20,11 +20,11 @@
 
 claude code 一条命令：
 
-claude mcp add --transport http multi-agent-connect http://<主服务IP>/mcp
+claude mcp add --transport http Agent-LAN http://<主服务IP>/mcp
 
-## 二、提示词正文
+## 二、提示词安装
 
-你在 multi-agent-connect 局域网协作网络中工作。主服务地址：http://<主服务IP>/mcp（MCP 协议，无需安装任何东西）。
+你在 Agent-LAN 局域网协作网络中工作。主服务地址：http://<主服务IP>/mcp（MCP 协议，无需安装任何东西）。
 
 ### 接入（每次会话开始）
 
@@ -82,12 +82,14 @@ Node 环境的接入方也可以直接用 @mac/client 的 AgentClient，行为�
 
 **无法把 MCP 注册到全局/当前会话时**
 
-接入层不依赖 MCP 注册（worker.sh 走纯 HTTP）。只要还能跑命令，
+接入层不强制依赖 MCP 注册（worker.sh 走纯 HTTP）。只要还能跑命令，
 就能用 curl 完成上报与协作，例如上报结果：
 
-    curl -s --noproxy '*' -X POST http://<主服务IP>/mcp       -H 'content-type: application/json'       -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"mac_report","arguments":{"taskId":"<任务id>","state":"completed","text":"结果说明"}}}'
+    curl -s --noproxy '*' -X POST http://<主服务IP>/mcp       -H 'content-type: application/json'       -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"mac_report","arguments":{"taskId":"<任务id>","name":"你的节点名","state":"completed","text":"结果说明"}}}'
 
-同机多个实例接入时，NAME 必须各不相同（如 workbuddy-hake-2），否则会互抢任务。
+节点身份规则：**同一台机器的多个会话共用同一个 name**（服务端自动会话接管，
+任务队列单消费者，不会互抢）；**不同机器撞名会被拒绝**（报「节点名已被主机 xx 占用」，
+此时换一个 name 重新注册即可）。同机跑多个不同 agent 程序时才需要各起一名。
 MCP 配置注册在会话级/项目级即可，端点无状态，所有实例共用同一个 URL。
 
 ### 干活
@@ -95,6 +97,8 @@ MCP 配置注册在会话级/项目级即可，端点无状态，所有实例共
 6. 拿到 task 后执行；开始时先 mac_report（taskId、state="working"）报个进度。
 7. 完成后必须 mac_report（state="completed"、text=结果说明）；
    失败也要报（state="failed"、text=原因）。
+   执行中需要人工确认/补充信息时：mac_report(state="input-required"、
+   text=等谁确认什么)——hub 会弹通知，答复会以留言送达；不要干等或空转。
 8. 产出文件放 files 数组（每项 { name, contentBase64 }），上报后自动变成
    局域网共享地址，任何人可取。
 
@@ -110,6 +114,8 @@ MCP 配置注册在会话级/项目级即可，端点无状态，所有实例共
 任务带「[工单 ord-xxx]」前缀时属于正式工单流水线，相关工具：
 
 - mac_order_create / mac_order_get / mac_order_update / mac_order_list / mac_order_attach
+  以上工具都有 by 参数（你的节点名）：**流转工单必带**，timeline 归因全靠它；
+  不带则流转记录写成 "mcp"，无法追溯是谁操作的。
 - 领到工单任务：先 mac_report(state="working", name=你的节点名) 报开工，
   完成后 mac_report(state="completed", ...) 上报，产物走 mac_order_attach 挂到工单上。
   不报开工，控制台工单会一直停在 backlog、没人知道你已经开始做了。
@@ -134,6 +140,7 @@ MCP 配置注册在会话级/项目级即可，端点无状态，所有实例共
 
 ---
 
+<!-- 
 ## 三、人怎么介入（hub 这边）
 
 - 浏览器打开 http://localhost:<port>/console，每个节点卡片底部有留言输入框，
@@ -143,4 +150,5 @@ MCP 配置注册在会话级/项目级即可，端点无状态，所有实例共
 
 把某个节点设为 PM（编排者）：它读 http://<主服务IP>/mcp/pm.md 按说明书工作，
 用 mac_order_* 系列工具拆单、派发、推进流水线，其他节点照常接活上报。
-PM 的接入方式与普通节点完全相同（先跑 probe.sh 体检，再下载 worker.sh）。
+PM 的接入方式与普通节点完全相同（先跑 probe.sh 体检，再下载 worker.sh）。 
+-->

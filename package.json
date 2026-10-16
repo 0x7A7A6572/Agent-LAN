@@ -1,5 +1,5 @@
 {
-  "name": "multi-agent-connect",
+  "name": "Agent-LAN",
   "private": true,
   "version": "0.1.0",
   "description": "LAN 内多 agent 互调服务：A2A 跨机器层 + 本机 adapter",

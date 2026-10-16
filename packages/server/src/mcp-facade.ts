@@ -44,7 +44,7 @@ export interface McpFacadeDeps {
 const TOOLS = [
   {
     name: "mac_check_in",
-    description: "向 multi-agent-connect 主服务注册自己。40 秒内无任何活动判离线：长轮询 mac_pull_task 即算活动，无任务可领时也需每 30 秒内重调一次保活。注册应答里的 guideUrl 是完整节点规范，新会话建议读一次；核心义务：开工/完成必须 mac_report 且带 name，工单改指派必须紧跟 mac_send_task 通知新节点",
+    description: "向 Agent-LAN 主服务注册自己。40 秒内无任何活动判离线：长轮询 mac_pull_task 即算活动，无任务可领时也需每 30 秒内重调一次保活。注册应答里的 guideUrl 是完整节点规范，新会话建议读一次；核心义务：开工/完成必须 mac_report 且带 name，工单改指派必须紧跟 mac_send_task 通知新节点",
     inputSchema: {
       type: "object",
       properties: {
@@ -296,7 +296,7 @@ export async function mcpHandle(raw: string, req: http.IncomingMessage, res: htt
       reply({
         protocolVersion: msg.params?.protocolVersion ?? "2025-06-18",
         capabilities: { tools: {} },
-        serverInfo: { name: "multi-agent-connect", version: "0.0.1" }
+        serverInfo: { name: "Agent-LAN", version: "0.0.1" }
       });
       return;
     }

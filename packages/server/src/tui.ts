@@ -30,7 +30,7 @@ export function createTui(state: TuiState): (line?: string) => void {
 
     const rows: string[] = [];
     rows.push(CLEAR);
-    rows.push("multi-agent-connect · " + state.selfName + " · :" + state.port);
+    rows.push("Agent-LAN · " + state.selfName + " · :" + state.port);
     rows.push("─".repeat(46));
     rows.push("在线 " + online.length + " / 已知 " + presences.length);
     rows.push("");
