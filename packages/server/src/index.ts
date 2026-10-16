@@ -57,6 +57,35 @@ export function createServer(options: ServerOptions): http.Server {
   const pullWaiters: Map<string, ((task: Task) => void)[]> = new Map();
   const PULL_TIMEOUT_MS = 25000;
 
+  // 待领队列持久化：.tasks.json 防抖落盘，hub 重启恢复，防排队任务无声丢失
+  const tasksPath = options.ordersPath
+    ? path.join(path.dirname(options.ordersPath), ".tasks.json")
+    : path.join(path.resolve(options.filesDir ?? ".mac-files"), "..", ".tasks.json");
+  const pullQueues: Map<string, Task[]> = new Map();
+  let queueSaveTimer: ReturnType<typeof setTimeout> | undefined;
+  function saveQueues(): void {
+    clearTimeout(queueSaveTimer);
+    queueSaveTimer = setTimeout(() => {
+      queueSaveTimer = undefined;
+      const obj: Record<string, Task[]> = {};
+      for (const [k, v] of pullQueues) if (v.length) obj[k] = v;
+      try { fs.writeFileSync(tasksPath, JSON.stringify(obj, null, 2)); } catch { /* 下次变更重试 */ }
+    }, 300);
+    queueSaveTimer.unref?.();
+  }
+  function flushQueues(): void {
+    if (!queueSaveTimer) return;
+    clearTimeout(queueSaveTimer);
+    queueSaveTimer = undefined;
+    const obj: Record<string, Task[]> = {};
+    for (const [k, v] of pullQueues) if (v.length) obj[k] = v;
+    try { fs.writeFileSync(tasksPath, JSON.stringify(obj, null, 2)); } catch { /* 退出时尽力 */ }
+  }
+  try {
+    const raw = JSON.parse(fs.readFileSync(tasksPath, "utf8")) as Record<string, Task[]>;
+    for (const [k, v] of Object.entries(raw)) if (Array.isArray(v)) pullQueues.set(k, v);
+  } catch { /* 首次启动无文件 */ }
+
   function enqueueFor(name: string, task: Task): void {
     const waiters = pullWaiters.get(name);
     if (waiters?.length) {
@@ -67,9 +96,9 @@ export function createServer(options: ServerOptions): http.Server {
       let q = pullQueues.get(name);
       if (!q) { q = []; pullQueues.set(name, q); }
       q.push(task);
+      saveQueues();
     }
   }
-  const pullQueues: Map<string, Task[]> = new Map();
   // 节点信箱：人随时插话，对方 pull 时随任务一并带走
   const mailboxes: Map<string, { text: string; from: string; at: string }[]> = new Map();
 
@@ -88,6 +117,7 @@ export function createServer(options: ServerOptions): http.Server {
       task.updatedAt = new Date().toISOString();
       registry.setBusy(name, true, workingOnOf(task));
       log("-> task " + task.id.slice(0, 8) + " pulled by " + name);
+      saveQueues();
       return task;
     }
     // 会话接管：同 name 只允许一个活跃 waiter，新 pull 抵达即踢旧（旧立即空手返回）
@@ -184,11 +214,15 @@ export function createServer(options: ServerOptions): http.Server {
     }
     return task.prompt.slice(0, 24) + (task.prompt.length > 24 ? "…" : "");
   };
-  // 名册快照附带 hub 侧角色：PM 与控制台的选人依据
+  // 名册快照附带 hub 侧角色与排队任务数：PM 与控制台的选人依据
   const withRoles = (list: AgentPresence[]) =>
-    list.map(p => ({ ...p, role: roleStore.get(p.card.name) || undefined }));
+    list.map(p => ({
+      ...p,
+      role: roleStore.get(p.card.name) || undefined,
+      queuedCount: pullQueues.get(p.card.name)?.length ?? 0
+    }));
   // 落盘是防抖的：退出前同步 flush，防尾写丢失
-  const flushStores = () => { orderStore.flushNow(); registry.flushNow(); };
+  const flushStores = () => { orderStore.flushNow(); registry.flushNow(); flushQueues(); };
   process.on("exit", flushStores);
   process.on("SIGINT", () => { flushStores(); process.exit(0); });
   process.on("SIGTERM", () => { flushStores(); process.exit(0); });
