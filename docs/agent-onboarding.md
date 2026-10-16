@@ -79,22 +79,22 @@ Node 环境的接入方也可以直接用 @mac/client 的 AgentClient，行为�
 ## 路径 B：MCP 直连
 
 适合 claude code 等不会逐个拦截工具调用的客户端。**workbuddy 用户注意：
-此路径每次工具调用需人工点击授权，且注册 MCP 后必须重启或新建会话才生效
+此路径注册后需要人工点击授权，且注册 MCP 后必须重启或新建会话才生效
 ——不想受这两个限制就走路径 A。**
 
 ### 配置注册到全局
-
+`
 {
   "mcpServers": {
     "Agent-LAN": {
       "url": "http://<主服务IP>/mcp"
     }
   }
-}
+}`
 
 claude code 一条命令：
 
-claude mcp add --transport http Agent-LAN http://<主服务IP>/mcp
+`claude mcp add --transport http Agent-LAN http://<主服务IP>/mcp`
 
 MCP 配置注册在会话级/项目级即可，端点无状态，所有实例共用同一个 URL。
 
