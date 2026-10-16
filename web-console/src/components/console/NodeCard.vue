@@ -40,9 +40,18 @@ function log(line: string) {
   store.logs = [...store.logs, line]
 }
 
-// 右键删除节点记录：仍在线的会被下次心跳重新注册
+// 右键菜单：定位显示，含删除项；确认后才真正删除
+const menuOpen = ref(false)
+const menuPos = ref({ x: 0, y: 0 })
+
 function onContextmenu(e: MouseEvent) {
   e.preventDefault()
+  menuPos.value = { x: e.clientX, y: e.clientY }
+  menuOpen.value = true
+}
+
+function requestDelete() {
+  menuOpen.value = false
   if (!confirm('删除节点记录 ' + props.presence.card.name + ' ？\n仍在线的节点会在下次心跳重新出现。')) return
   emit('delete-node', props.presence.card.name)
 }
@@ -116,6 +125,29 @@ async function send() {
         </Button>
       </div>
     </CardContent>
+
+    <!-- 右键菜单：fixed 定位，点别处/Escape 关闭 -->
+    <Teleport to="body">
+      <div v-if="menuOpen" class="fixed inset-0 z-50" @click="menuOpen = false" @contextmenu.prevent="menuOpen = false" />
+      <div
+        v-if="menuOpen"
+        class="fixed z-50 min-w-40 rounded-md border bg-popover p-1 text-popover-foreground shadow-md"
+        :style="{ left: menuPos.x + 'px', top: menuPos.y + 'px' }"
+      >
+        <button
+          class="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent"
+          @click="menuOpen = false, mailOpen = true"
+        >
+          <Mail class="h-3.5 w-3.5" /> 发留言
+        </button>
+        <button
+          class="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm text-destructive hover:bg-accent"
+          @click="requestDelete"
+        >
+          删除节点记录
+        </button>
+      </div>
+    </Teleport>
 
     <!-- 留言弹窗 -->
     <Dialog v-model:open="mailOpen">
