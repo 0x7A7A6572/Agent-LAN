@@ -20,6 +20,7 @@ export interface Presence {
   lastSeen: number
   mcpActive?: boolean
   agent?: string
+  queuedCount?: number
 }
 
 export type OrderStatus =

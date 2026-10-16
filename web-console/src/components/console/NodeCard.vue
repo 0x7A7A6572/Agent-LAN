@@ -106,6 +106,9 @@ async function send() {
       <p class="flex items-center gap-1 text-sm text-muted-foreground">
         <TrendingUp v-if="working" class="h-4 w-4 text-blue-500" />
         {{ working ? '执行中 · ' + (presence.workingOn || '') : presence.online ? '空闲' : '离线' }}
+        <span v-if="(presence.queuedCount ?? 0) > 0" class="rounded bg-yellow-500/15 px-1.5 text-xs text-yellow-600">
+          排队 {{ presence.queuedCount }}
+        </span>
       </p>
       <p class="text-xs text-muted-foreground/70">心跳 {{ time }}</p>
     </CardHeader>
