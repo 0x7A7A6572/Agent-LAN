@@ -44,7 +44,7 @@ export interface McpFacadeDeps {
 const TOOLS = [
   {
     name: "mac_check_in",
-    description: "向 Agent-LAN 主服务注册自己。40 秒内无任何活动判离线：长轮询 mac_pull_task 即算活动，无任务可领时也需每 30 秒内重调一次保活。注册应答里的 guideUrl 是完整节点规范，新会话建议读一次；核心义务：开工/完成必须 mac_report 且带 name，工单改指派必须紧跟 mac_send_task 通知新节点",
+    description: "向 Agent-LAN 主服务注册自己。40 秒内无任何活动判离线：长轮询 mac_pull_task 即算活动，无任务可领时也需每 30 秒内重调一次保活。注册应答里的 guideUrl 是完整节点规范，新会话需要读一次；核心义务：开工/完成必须 mac_report 且带 name，工单改指派必须紧跟 mac_send_task 通知新节点",
     inputSchema: {
       type: "object",
       properties: {
@@ -156,7 +156,7 @@ const TOOLS = [
   },
   {
     name: "mac_order_create",
-    description: "建工单。可建母单，也可 parent 指向母单建子单；blockedBy 表达依赖，全 done 后才能离开 backlog",
+    description: "建工单。可建母单，也可 parent 指向母单建子单；blockedBy 表达依赖，全 done 后才能离开 backlog。by 传你的节点名（timeline 归因）",
     inputSchema: {
       type: "object",
       properties: {

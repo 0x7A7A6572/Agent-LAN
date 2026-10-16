@@ -162,6 +162,9 @@ export function createServer(options: ServerOptions): http.Server {
     }
     pushEvent(taskId, { kind: "status", status: { state: t.state, timestamp: t.updatedAt } });
     log("[task] " + taskId.slice(0, 8) + " -> " + t.state + " (by agent)");
+    if (state === "input-required") {
+      log("[!!] 任务 " + taskId.slice(0, 8) + " 等待人工确认" + (text ? ": " + text.slice(0, 120) : ""));
+    }
     syncOrderFromTask(t, state, "mcp-report");
     return true;
   }
