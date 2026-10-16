@@ -41,7 +41,7 @@ if [ -n "$MAC_ROOT" ] && [ -f "$MAC_DIR/node.json" ]; then
     [ -n "$JA" ] && [ "$JA" != "$AGENT" ] && log "[!] 警告：目录名 $AGENT 与 node.json 记录的 agent「$JA」不一致，建议重新 probe.sh --install 归位"
   fi
   # node.json 持久身份：同 agent 任何会话裸启动不丢
-  eval "$(grep -E '"(name|desc|server|agent)"' "$MAC_DIR/node.json" 2>/dev/null | sed 's/[,\"]//g' | sed 's/^/J_/')" 2>/dev/null
+    eval "$(sed -n 's/.*"\(name\|desc\|server\|agent\)": *"\([^"]*\)".*/J_\1='"'"'\2'"'"'/p' "$MAC_DIR/node.json" 2>/dev/null)" 2>/dev/null
 fi
 
 NAME=${NAME:-${J_name:-worker-$(hostname)}}
