@@ -56,27 +56,36 @@ else
   echo "结论：$fail 项不通过，按上面提示处理后重跑本脚本"
 fi
 
-# 一键安装模式：probe.sh --install NAME=xxx [DESC=xxx]
+# 一键安装模式：probe.sh --install AGENT=xxx NAME=yyy [DESC=zzz]
+# 每 agent 一目录：~/.mac-worker/<agent>/worker.sh + node.json（身份持久化）
 if [ "$1" = "--install" ]; then
-  INSTALL_DIR="$HOME/.mac-worker"
+  INSTALL_AGENT="default"
+  INSTALL_NAME=""
+  INSTALL_DESC="general worker"
+  for kv in ${@:2}; do
+    case "$kv" in
+      AGENT=*) INSTALL_AGENT="${kv#AGENT=}" ;;
+      NAME=*) INSTALL_NAME="${kv#NAME=}" ;;
+      DESC=*) INSTALL_DESC="${kv#DESC=}" ;;
+    esac
+  done
+  [ -n "$INSTALL_NAME" ] || { echo "[x] 缺少 NAME=节点名"; exit 1; }
+  INSTALL_DIR="$HOME/.mac-worker/$INSTALL_AGENT"
   mkdir -p "$INSTALL_DIR" || { echo "[x] 无法创建 $INSTALL_DIR"; exit 1; }
   curl -s --noproxy '*' "http://$SERVER/worker.sh" -o "$INSTALL_DIR/worker.sh" || { echo "[x] 下载失败"; exit 1; }
   chmod +x "$INSTALL_DIR/worker.sh" 2>/dev/null
-  for kv in "$@"; do
-    case "$kv" in
-      NAME=*|DESC=*|SERVER=*) echo "$kv" >> "$INSTALL_DIR/node.env.first" ;;
-    esac
-  done
-  # 生成 node.env（不覆盖已有配置）
-  if [ ! -f "$INSTALL_DIR/node.env" ]; then
-    {
-      echo "MAC_NAME=$(grep '^NAME=' "$INSTALL_DIR/node.env.first" 2>/dev/null | cut -d= -f2-)"
-      echo "MAC_DESC=$(grep '^DESC=' "$INSTALL_DIR/node.env.first" 2>/dev/null | cut -d= -f2-)"
-      echo "MAC_SERVER=$SERVER"
-    } | sed 's/=$//' > "$INSTALL_DIR/node.env"
-    rm -f "$INSTALL_DIR/node.env.first"
+  if [ ! -f "$INSTALL_DIR/node.json" ]; then
+    cat > "$INSTALL_DIR/node.json" <<EOF
+{
+  "agent": "$INSTALL_AGENT",
+  "name": "$INSTALL_NAME",
+  "desc": "$INSTALL_DESC",
+  "server": "$SERVER"
+}
+EOF
   fi
   echo "[✓] 已安装到 $INSTALL_DIR"
   echo "启动：bash $INSTALL_DIR/worker.sh（配置已记忆，免参数）"
   echo "临时换名调试：NAME=xxx bash $INSTALL_DIR/worker.sh"
+  exit 0
 fi

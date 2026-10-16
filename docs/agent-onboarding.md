@@ -46,16 +46,18 @@ claude mcp add --transport http Agent-LAN http://<主服务IP>/mcp
 体检项：bash、curl、目录写权限、python（可选）、主服务连通性。
 全部通过后再执行下面的接入命令。
 
-在能跑 bash 的机器上（推荐一键安装到 ~/.mac-worker，配置自动记忆）：
+在能跑 bash 的机器上（推荐一键安装，每 agent 独立目录，身份持久化）：
 
     curl -s --noproxy '*' http://<主服务IP>/probe.sh -o probe.sh
-    SERVER=<主服务IP:端口> bash probe.sh --install NAME=<你的节点名>
+    SERVER=<主服务IP:端口> bash probe.sh --install AGENT=<agent名如dsh> NAME=<你的节点名>
 
-之后任何会话裸启动即可（免参数，身份一致）：
+安装位置 ~/.mac-worker/<agent>/（worker.sh + node.json 身份文件）。同机多个
+agent（dsh/workbuddy/...）各装各的目录，互不抢任务；同一 agent 的所有会话
+裸启动共享身份，服务端自动会话接管：
 
-    bash ~/.mac-worker/worker.sh
+    bash ~/.mac-worker/<agent>/worker.sh
 
-临时换名调试：NAME=xxx bash ~/.mac-worker/worker.sh。
+临时换名调试：NAME=xxx bash ~/.mac-worker/<agent>/worker.sh。
 
 或手动接入（脚本落当前目录，不推荐）：
 
