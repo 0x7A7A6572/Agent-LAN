@@ -85,13 +85,13 @@ async function send() {
         <Badge
           variant="outline"
           class="ml-auto gap-1 line-clamp-1"
-          :class="working ? 'border-blue-500/60 text-blue-500' : presence.online && !presence.mcpActive ? 'border-yellow-500/60 text-yellow-600' : ''"
+          :class="working ? 'border-blue-500/60 text-blue-500' : ''"
+          :title="working ? '执行中' : presence.online ? (presence.mcpActive ? '在线' : '在线·仅心跳') : '离线'"
         >
           <span
             class="size-1.5 rounded-full"
             :class="working ? 'animate-pulse bg-blue-500' : presence.online ? (presence.mcpActive ? 'bg-green-500' : 'bg-yellow-500') : 'bg-muted-foreground/40'"
           />
-          {{ working ? '执行中' : presence.online ? (presence.mcpActive ? '在线' : '在线·仅心跳') : '离线' }}
         </Badge>
       </div>
       <button
