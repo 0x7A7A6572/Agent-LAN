@@ -49,6 +49,7 @@ const TOOLS = [
       type: "object",
       properties: {
         name: { type: "string", description: "节点唯一名，如 wb-machineA" },
+        agent: { type: "string", description: "agent 程序类型（与安装目录名一致，如 dsh/workbuddy）；同机同类型共用" },
         description: { type: "string", description: "一句话说明本节点能做什么" },
         host: { type: "string", description: "所在主机标识（机器名或 IP），同机的多个 agent 填同一个" },
         abilities: { type: "array", items: { type: "string" }, description: "能力标签列表" }
@@ -323,7 +324,8 @@ export async function mcpHandle(raw: string, req: http.IncomingMessage, res: htt
               version: "0.0.1",
               host: a.host ? String(a.host) : undefined,
               capabilities: { streaming: false, adapters: ["mcp"] }
-            };
+            } as AgentCard & { agent?: string };
+            if (a.agent) (card as any).agent = String(a.agent);
             const r = deps.checkIn(card, sourceIp);
             if (r.conflictHost) {
               deps.log("[!] 节点名冲突: " + card.name + " 已注册于主机 " + r.conflictHost);

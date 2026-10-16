@@ -6,6 +6,8 @@ export interface AgentCard {
   version: string;
   /** 所在主机标识，如机器名或 IP；缺省按节点名分组 */
   host?: string;
+  /** agent 程序类型（dsh/workbuddy/...），与 ~/.mac-worker/<agent> 目录一致 */
+  agent?: string;
   capabilities: {
     streaming: boolean;
     adapters: string[];
@@ -79,6 +81,8 @@ export interface AgentPresence {
   baseUrl?: string;
   /** 分组用主机标识：卡片 host > 来源 IP > url 兜底（服务端算好） */
   groupHost: string;
+  /** agent 程序类型（dsh/workbuddy/...），注册时自报并随名册下发 */
+  agent?: string;
   /** 最近一次带 name 的 MCP 工具调用时刻；无则该节点只有心跳在跳 */
   lastMcp?: string;
   /** 90s 内有 MCP 工具调用 = agent 会话真实存活（读时计算） */

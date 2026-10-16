@@ -4,6 +4,7 @@ export interface AgentCard {
   description?: string
   url: string
   host?: string
+  agent?: string
   [k: string]: unknown
 }
 
@@ -18,6 +19,7 @@ export interface Presence {
   groupHost?: string
   lastSeen: number
   mcpActive?: boolean
+  agent?: string
 }
 
 export type OrderStatus =

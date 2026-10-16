@@ -25,7 +25,7 @@ const emit = defineEmits<{
 }>()
 
 const store = useConsoleStore()
-const logo = computed(() => logoOf(props.presence.card.name))
+const logo = computed(() => logoOf(props.presence.card.name, props.presence.agent))
 const working = computed(() => props.presence.online && props.presence.state === 'working')
 const time = computed(() => new Date(props.presence.lastSeen).toLocaleTimeString('zh-CN', { hour12: false }))
 // 设备分组：服务端算好的 groupHost（卡片 host > 来源 IP > url 兜底）

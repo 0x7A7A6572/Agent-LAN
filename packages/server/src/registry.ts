@@ -71,6 +71,7 @@ export class Registry {
       online: true,
       baseUrl: baseUrl === null ? undefined : (baseUrl ?? existing?.baseUrl),
       groupHost,
+      agent: (card as AgentCard & { agent?: string }).agent ?? existing?.agent,
       state: existing?.state,
       workingOn: existing?.workingOn,
       busySince: existing?.busySince

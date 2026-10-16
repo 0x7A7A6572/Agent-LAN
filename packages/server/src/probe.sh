@@ -71,6 +71,15 @@ if [ "$1" = "--install" ]; then
   done
   [ -n "$INSTALL_NAME" ] || { echo "[x] 缺少 NAME=节点名"; exit 1; }
   INSTALL_DIR="$HOME/.mac-worker/$INSTALL_AGENT"
+  # 一致性校验：目录已有身份且 agent 类型不符 → 拒绝安装，防装错目录
+  if [ -f "$INSTALL_DIR/node.json" ]; then
+    EXIST_AGENT=$(grep -o '"agent": *"[^"]*"' "$INSTALL_DIR/node.json" 2>/dev/null | cut -d'"' -f4)
+    if [ -n "$EXIST_AGENT" ] && [ "$EXIST_AGENT" != "$INSTALL_AGENT" ]; then
+      echo "[x] 目录 $INSTALL_DIR 已属于 agent「$EXIST_AGENT」，与本次 --install AGENT=$INSTALL_AGENT 不符"
+      echo "    请换正确的 AGENT= 参数，或用其他目录名"
+      exit 1
+    fi
+  fi
   mkdir -p "$INSTALL_DIR" || { echo "[x] 无法创建 $INSTALL_DIR"; exit 1; }
   curl -s --noproxy '*' "http://$SERVER/worker.sh" -o "$INSTALL_DIR/worker.sh" || { echo "[x] 下载失败"; exit 1; }
   chmod +x "$INSTALL_DIR/worker.sh" 2>/dev/null

@@ -35,6 +35,11 @@ fi
 AGENT=${AGENT:-default}
 MAC_DIR="$MAC_ROOT/$AGENT"
 if [ -n "$MAC_ROOT" ] && [ -f "$MAC_DIR/node.json" ]; then
+  # 自校：安装目录名 vs node.json 记录的 agent 不一致 = 目录被手动挪过/复制错位
+  if grep -q '"agent"' "$MAC_DIR/node.json" 2>/dev/null; then
+    JA=$(grep -o '"agent": *"[^"]*"' "$MAC_DIR/node.json" | cut -d'"' -f4)
+    [ -n "$JA" ] && [ "$JA" != "$AGENT" ] && log "[!] 警告：目录名 $AGENT 与 node.json 记录的 agent「$JA」不一致，建议重新 probe.sh --install 归位"
+  fi
   # node.json 持久身份：同 agent 任何会话裸启动不丢
   eval "$(grep -E '"(name|desc|server|agent)"' "$MAC_DIR/node.json" 2>/dev/null | sed 's/[,\"]//g' | sed 's/^/J_/')" 2>/dev/null
 fi
@@ -110,7 +115,7 @@ mcp_call() {
 
 for i in $(seq 1 $MAX); do
   # ---------- 1) 注册/心跳（每次循环续命，40s 无活动判离线） ----------
-  HB=$(mcp_call mac_check_in "{\"name\":\"$NAME\",\"description\":\"$DESC\"}")
+  HB=$(mcp_call mac_check_in "{\"name\":\"$NAME\",\"agent\":\"$AGENT\",\"description\":\"$DESC\"}")
   if echo "$HB" | grep -q '节点名 .* 已被主机'; then
     log "[x] 节点名冲突：$(echo "$HB" | grep -o '节点名 [^"]*')"
     log "[x] 请停掉本脚本，换一个 NAME 重新启动（同机多实例 NAME 必须各不相同）"
@@ -191,7 +196,7 @@ else: print('EMPTY')
     (
       for i in $(seq 1 360); do
         sleep 20
-        mcp_call mac_check_in "{\"name\":\"$NAME\",\"description\":\"$DESC\"}" >/dev/null 2>&1 || true
+        mcp_call mac_check_in "{\"name\":\"$NAME\",\"agent\":\"$AGENT\",\"description\":\"$DESC\"}" >/dev/null 2>&1 || true
       done
     ) >/dev/null 2>&1 &
     exit 0
