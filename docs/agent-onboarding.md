@@ -1,7 +1,8 @@
 # 局域网 agent 接入提示词
-
+<!-- 
 给对方机器上的 AI agent（workbuddy / dsh / claude code 等）的完整提示词。
 使用前把 <主服务IP> 换成实际地址（如 192.168.110.47:9600）。
+ -->
 
 ---
 
@@ -45,7 +46,18 @@ claude mcp add --transport http multi-agent-connect http://<主服务IP>/mcp
 体检项：bash、curl、目录写权限、python（可选）、主服务连通性。
 全部通过后再执行下面的接入命令。
 
-在能跑 bash 的机器上：
+在能跑 bash 的机器上（推荐一键安装到 ~/.mac-worker，配置自动记忆）：
+
+    curl -s --noproxy '*' http://<主服务IP>/probe.sh -o probe.sh
+    SERVER=<主服务IP:端口> bash probe.sh --install NAME=<你的节点名>
+
+之后任何会话裸启动即可（免参数，身份一致）：
+
+    bash ~/.mac-worker/worker.sh
+
+临时换名调试：NAME=xxx bash ~/.mac-worker/worker.sh。
+
+或手动接入（脚本落当前目录，不推荐）：
 
     curl -s http://<主服务IP>/worker.sh -o mac_worker.sh
     NAME=<你的节点名> DESC=<一句话能力> SERVER=<主服务IP:端口> bash mac_worker.sh
