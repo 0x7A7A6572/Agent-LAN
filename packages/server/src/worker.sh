@@ -13,9 +13,41 @@
 
 WORKER_VERSION=__VERSION__
 
-NAME=${NAME:-worker-$(hostname)}
-DESC=${DESC:-general worker}
-SERVER=${SERVER:?缺少 SERVER 环境变量，如 192.168.110.47:9600}
+# 安装目录定位：优先 ~/.mac-worker；WSL 下回退探测 /mnt/c 真实 Windows 主目录
+# node.env 持久化 NAME/DESC/SERVER，多会话裸启动共享同一节点身份
+MAC_DIR=""
+if [ -d "$HOME/.mac-worker" ]; then
+  MAC_DIR="$HOME/.mac-worker"
+elif [ -n "$WSL_DISTRO_NAME" ] && [ -d "/mnt/c/Users" ]; then
+  # WSL：找 Windows 用户主目录下的 .mac-worker（与 Git Bash 共享同一份）
+  WUSER=$(cmd.exe /c "echo %USERNAME%" 2>/dev/null | tr -d '\r\n' | tr -d '\r')
+  for cand in "/mnt/c/Users/$WUSER/.mac-worker" /mnt/c/Users/Public/.mac-worker; do
+    if [ -d "$cand" ]; then MAC_DIR="$cand"; break; fi
+  done
+fi
+if [ -n "$MAC_DIR" ]; then
+  # 环境变量优先于持久配置（临时换名调试用）
+  if [ -f "$MAC_DIR/node.env" ]; then
+    eval "$(grep -E '^(MAC_NAME|MAC_DESC|MAC_SERVER)=' "$MAC_DIR/node.env" 2>/dev/null)"
+  fi
+fi
+
+NAME=${NAME:-${MAC_NAME:-worker-$(hostname)}}
+DESC=${DESC:-${MAC_DESC:-general worker}}
+SERVER=${SERVER:-${MAC_SERVER:-}}
+if [ -z "$SERVER" ]; then
+  echo "[x] 缺少 SERVER。首次启动：SERVER=<主服务IP:端口> bash $0；之后自动记忆" >&2
+  exit 1
+fi
+# 配置持久化：首次成功连接后写 node.env，之后任何会话裸启动即可
+save_env() {
+  [ -n "$MAC_DIR" ] || return 0
+  cat > "$MAC_DIR/node.env" <<EOF
+MAC_NAME=$NAME
+MAC_DESC=$DESC
+MAC_SERVER=$SERVER
+EOF
+}
 WAIT_MS=${WAIT_MS:-6000}
 MAX=${MAX:-100000}
 
@@ -83,6 +115,11 @@ for i in $(seq 1 $MAX); do
   if [ "$UNREACH" -gt 0 ]; then
     log "[✓] 主服务已恢复（期间不可达 ${UNREACH} 次）"
     UNREACH=0
+  fi
+  # 首次成功连接：记忆节点配置，此后任何会话免参数启动
+  if [ -n "$MAC_DIR" ] && [ ! -f "$MAC_DIR/node.env" ]; then
+    save_env
+    log "[✓] 节点配置已记忆到 $MAC_DIR/node.env，下次可直接 bash $0 启动"
   fi
 
   # ---------- 1.5) 版本检查：hub 版本不同则自更新并重启 ----------

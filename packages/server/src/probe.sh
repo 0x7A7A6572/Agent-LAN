@@ -47,9 +47,36 @@ fi
 
 echo ""
 if [ $fail -eq 0 ]; then
-  echo "结论：全部通过，可以直接接入："
+  echo "结论：全部通过。推荐一键安装到 ~/.mac-worker（跨会话/跨项目通用，自动记忆配置）："
+  echo "  SERVER=$SERVER bash probe.sh --install NAME=<节点名>"
+  echo "或手动接入："
   echo "  curl -s --noproxy '*' http://$SERVER/worker.sh -o mac_worker.sh"
   echo "  NAME=<节点名> DESC=<一句话能力> SERVER=$SERVER bash mac_worker.sh"
 else
   echo "结论：$fail 项不通过，按上面提示处理后重跑本脚本"
+fi
+
+# 一键安装模式：probe.sh --install NAME=xxx [DESC=xxx]
+if [ "$1" = "--install" ]; then
+  INSTALL_DIR="$HOME/.mac-worker"
+  mkdir -p "$INSTALL_DIR" || { echo "[x] 无法创建 $INSTALL_DIR"; exit 1; }
+  curl -s --noproxy '*' "http://$SERVER/worker.sh" -o "$INSTALL_DIR/worker.sh" || { echo "[x] 下载失败"; exit 1; }
+  chmod +x "$INSTALL_DIR/worker.sh" 2>/dev/null
+  for kv in "$@"; do
+    case "$kv" in
+      NAME=*|DESC=*|SERVER=*) echo "$kv" >> "$INSTALL_DIR/node.env.first" ;;
+    esac
+  done
+  # 生成 node.env（不覆盖已有配置）
+  if [ ! -f "$INSTALL_DIR/node.env" ]; then
+    {
+      echo "MAC_NAME=$(grep '^NAME=' "$INSTALL_DIR/node.env.first" 2>/dev/null | cut -d= -f2-)"
+      echo "MAC_DESC=$(grep '^DESC=' "$INSTALL_DIR/node.env.first" 2>/dev/null | cut -d= -f2-)"
+      echo "MAC_SERVER=$SERVER"
+    } | sed 's/=$//' > "$INSTALL_DIR/node.env"
+    rm -f "$INSTALL_DIR/node.env.first"
+  fi
+  echo "[✓] 已安装到 $INSTALL_DIR"
+  echo "启动：bash $INSTALL_DIR/worker.sh（配置已记忆，免参数）"
+  echo "临时换名调试：NAME=xxx bash $INSTALL_DIR/worker.sh"
 fi
