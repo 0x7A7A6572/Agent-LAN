@@ -83,13 +83,11 @@ new AgentClient({
 
 完整示例见 `examples/echo-agent.mjs`。客户端机制：10s 心跳（inbound 标记）+ 长轮询领任务（/agent/pull）+ 结果上报（/agent/result）。
 
-## MCP 门面（其他机器零安装接入）
+## MCP 端点
 
-主服务暴露 Streamable HTTP MCP 端点 `/mcp`，局域网内任何 MCP client（workbuddy / dsh / claude code / codex）加一行配置即入网：
-
-```json
-{ "mcpServers": { "Agent-LAN": { "url": "http://<hub-ip>:<port>/mcp" } } }
-```
+主服务暴露 Streamable HTTP MCP 端点 `/mcp`。它是 hub 的工具面：
+接入方的 worker.sh 与 @mac/client 都通过它注册、领活、上报，
+不再需要人工注册 MCP 配置。
 
 | 工具 | 作用 |
 |---|---|

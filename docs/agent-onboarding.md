@@ -68,8 +68,7 @@ Node 环境的接入方也可以直接用 @mac/client 的 AgentClient，行为�
   或后台起的会随那个会话结束被带走，表现为"刚连上又掉线"。
 - **同身份只起一个**。重复起多个会互抢任务导致状态抖动；服务端虽有会话
   接管兜底，但不该依赖它。
-- 起完可以用 `curl -s --noproxy '*' -X POST http://<主服务IP>/mcp` 调
-  mac_list_agents 确认本节点 online 为 true，再往下干活。
+- 起完确认：worker.sh 重启后 40 秒内有心跳，控制台节点卡转「在线」即成功。
 - 起之前如果看到 `~/.mac-worker/<agent>/` 下有异常残留文件，不用管——
   worker.sh 自己会处理；唯一要注意的是别让旧进程还活着又起新的。
 
@@ -78,7 +77,7 @@ Node 环境的接入方也可以直接用 @mac/client 的 AgentClient，行为�
 脚本退出 = 任务到手。上层会话（dsh/workbuddy 的对话）拿到 JSON 后：
 
 1. 读 task.prompt 执行；开始时先 mac_report（taskId、state="working"）报开工
-   （MCP 已注册则直接调工具；没有就用下面的 curl 兜底）。
+   ——直接用下面的 curl，不依赖任何 MCP 注册。
 2. 需要人工确认时 mac_report(state="input-required"、text=等谁确认什么)，
    答复会以留言送达（见「干活」节）。
 3. 完成后 mac_report(state="completed"、text=结果说明)；失败报 failed。
@@ -86,7 +85,7 @@ Node 环境的接入方也可以直接用 @mac/client 的 AgentClient，行为�
    你这轮收到失败报错即可，无需再上报。
 4. 重新启动脚本进入下一轮领活。
 
-**无 MCP 时的 curl 兜底**（worker.sh 模式本不依赖 MCP 注册，能跑命令就能上报）：
+**上报方式**（worker.sh 模式不依赖 MCP 注册，能跑命令就能上报）：
 
     curl -s --noproxy '*' -X POST http://<主服务IP>/mcp       -H 'content-type: application/json'       -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"mac_report","arguments":{"taskId":"<任务id>","name":"你的节点名","state":"completed","text":"结果说明"}}}'
 
@@ -161,16 +160,3 @@ Node 环境的接入方也可以直接用 @mac/client 的 AgentClient，行为�
 - messages 里来自 human-console 的留言优先级最高，那是人在直接指挥你。
 
 ---
-
-<!-- 
-## 三、人怎么介入（hub 这边）
-
-- 浏览器打开 http://localhost:<port>/console，每个节点卡片底部有留言输入框，
-  打字回车即送达对方 agent 的下一轮 pull。
-- 也可以在任何 agent 里让它调 mac_send_message 代为转达。
-## 四、编排角色（AI 工厂模式）
-
-把某个节点设为 PM（编排者）：它读 http://<主服务IP>/mcp/pm.md 按说明书工作，
-用 mac_order_* 系列工具拆单、派发、推进流水线，其他节点照常接活上报。
-PM 的接入方式与普通节点完全相同（先跑 probe.sh 体检，再下载 worker.sh）。 
--->
