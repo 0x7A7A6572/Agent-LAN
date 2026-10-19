@@ -7,7 +7,7 @@ import type { OrderStore } from "./orders.js";
 
 export interface McpFacadeDeps {
   /** 注册自己（心跳）；sourceIp 用于 inbound 节点自动分组 */
-  checkIn: (card: AgentCard, sourceIp?: string) => { ok: boolean; conflictHost?: string; intervalMs: number; workerVersion?: string; guideUrl?: string };
+  checkIn: (card: AgentCard, sourceIp?: string, state?: string, workingOn?: string) => { ok: boolean; conflictHost?: string; intervalMs: number; workerVersion?: string; guideUrl?: string };
   /** 领任务，超时返回 null */
   pullTask: (name: string, timeoutMs: number) => Promise<unknown>;
   /** 任务投递未能送达（响应写出前连接已断）：回收该任务免得卡死 */
@@ -60,7 +60,16 @@ const TOOLS = [
         agent: { type: "string", description: "agent 程序类型（与安装目录名一致，如 dsh/workbuddy）；同机同类型共用" },
         description: { type: "string", description: "15字以内说明本节点能做什么" },
         host: { type: "string", description: "所在主机标识（机器名或 IP），同机的多个 agent 填同一个" },
-        abilities: { type: "array", items: { type: "string" }, description: "能力标签列表" }
+        abilities: { type: "array", items: { type: "string" }, description: "能力标签列表" },
+        state: {
+          type: "string",
+          enum: ["working", "idle"],
+          description:
+            "可选。主动上报执行态，供控制台实时显示。干那种没有任务投递的活（人工接管、会话内自行排障/改代码/写文档）时传 working，" +
+            "否则控制台只会显示「空闲」。working 默认 15 分钟到期自动回空闲；干完请显式传 idle 立即复位。" +
+            "不带该参数 = 纯心跳，不改动现有执行态"
+        },
+        workingOn: { type: "string", description: "可选。配合 state=working 说明正在做什么，控制台直接展示（如「人工接管：修控制台执行态」）" }
       },
       required: ["name"]
     }
@@ -363,7 +372,7 @@ export async function mcpHandle(raw: string, req: http.IncomingMessage, res: htt
               capabilities: { streaming: false, adapters: ["mcp"] }
             } as AgentCard & { agent?: string };
             if (a.agent) (card as any).agent = String(a.agent);
-            const r = deps.checkIn(card, sourceIp);
+            const r = deps.checkIn(card, sourceIp, a.state ? String(a.state) : undefined, a.workingOn ? String(a.workingOn) : undefined);
             if (r.conflictHost) {
               deps.log("[!] 节点名冲突: " + card.name + " 已注册于主机 " + r.conflictHost);
               replyError(-32002, "节点名 " + card.name + " 已被主机 " + r.conflictHost +

@@ -82,6 +82,15 @@ export interface AgentPresence {
   state?: "idle" | "working";
   /** busy 起始毫秒（服务端内部用，防僵尸超时判定） */
   busySince?: number;
+  /**
+   * 执行中来源，决定 workingOn 措辞与到期策略：
+   * - task    派发的任务（由投递/上报驱动，不设 TTL，沿用 busySince + BUSY_MAX_MS）
+   * - message 刚收到留言在消化（投递即置位，下一次领活即视为处理完）
+   * - agent   节点主动上报（如人工接管 / 会话内自行开工），靠 TTL 或显式 idle 清除
+   */
+  busyKind?: "task" | "message" | "agent";
+  /** 该执行态的到期毫秒时刻；到期由 sweep 自动回空闲（task 类不设） */
+  busyUntil?: number;
   /** 正在做的工单摘要，如「ord-xxx 登录页」 */
   workingOn?: string;
   /** 正在等谁确认什么；有值即需人工介入，控制台据此提醒 */

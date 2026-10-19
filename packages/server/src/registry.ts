@@ -104,6 +104,8 @@ export class Registry {
       workingOn: existing?.workingOn,
       waitingFor: existing?.waitingFor,
       busySince: existing?.busySince,
+      busyKind: existing?.busyKind,
+      busyUntil: existing?.busyUntil,
       sourceIp: sourceIp ?? existing?.sourceIp
     });
     if (!existing) this.save();
@@ -126,16 +128,28 @@ export class Registry {
     return this.agents.get(name);
   }
 
-  /** 执行中标记：领到任务置位，上报结果清除；workingOn 为正在做的工单描述 */
-  setBusy(name: string, on: boolean, workingOn?: string): boolean {
+  /**
+   * 执行中标记：领到任务/收到留言/节点主动上报时置位，上报结果或到期后清除。
+   * @param workingOn 正在做什么（控制台直接展示）
+   * @param kind      执行态来源（task/message/agent），缺省沿用原值
+   * @param ttlMs     有效期毫秒；给了就到期自动回空闲，不给则沿用 busySince + BUSY_MAX_MS
+   */
+  setBusy(name: string, on: boolean, workingOn?: string, kind?: "task" | "message" | "agent", ttlMs?: number): boolean {
     const p = this.agents.get(name);
     if (!p) return false;
     p.state = on ? "working" : "idle";
     p.workingOn = on ? (workingOn ?? p.workingOn) : undefined;
     p.waitingFor = on ? p.waitingFor : undefined;
+    p.busyKind = on ? (kind ?? p.busyKind ?? "task") : undefined;
+    p.busyUntil = on && ttlMs ? Date.now() + ttlMs : undefined;
     if (on) p.busySince = Date.now();
     p.lastSeen = new Date().toISOString();
     return true;
+  }
+
+  /** 当前执行态来源（无则 undefined），领活时据此判断「留言已消化完」 */
+  busyKindOf(name: string): "task" | "message" | "agent" | undefined {
+    return this.agents.get(name)?.busyKind;
   }
 
   /** 等待人工确认：置 waitingFor，控制台据此提示；传空串清除 */
@@ -160,6 +174,14 @@ export class Registry {
   sweep(): void {
     const now = Date.now();
     for (const p of this.agents.values()) {
+      // 带有效期的执行态（留言消化 / 主动上报）：到期自动回空闲，防节点不回报就一直挂「执行中」
+      if (p.state === "working" && p.busyUntil && now >= p.busyUntil) {
+        p.state = "idle";
+        p.workingOn = undefined;
+        p.busyKind = undefined;
+        p.busyUntil = undefined;
+        p.busySince = undefined;
+      }
       const age = now - new Date(p.lastSeen).getTime();
       // 执行中的节点不产生心跳（worker 领活即退出），豁免离线判定
       const busyOk = p.state === "working"
