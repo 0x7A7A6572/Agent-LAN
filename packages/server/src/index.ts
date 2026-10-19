@@ -488,6 +488,51 @@ export function createServer(options: ServerOptions): http.Server {
   let pmPolicy = "";
   try { pmPolicy = fs.readFileSync(pmFiles.policy, "utf8"); } catch { /* 策略文件可选 */ }
 
+  /**
+   * 接管前置检查：模型配置不可用时不允许把派发权交给 PM。
+   * 否则所有跨工单派发会卡在一个不存在的端点后面，只能靠 60s 超时降级兜底。
+   * @returns 具体问题描述；可用则返回 null
+   */
+  function pmReadiness(): string | null {
+    if (!pmConfig.baseUrl?.trim()) return "未配置模型地址（baseUrl）";
+    if (!/^https?:\/\//i.test(pmConfig.baseUrl)) return "模型地址必须是 http(s) 开头：" + pmConfig.baseUrl;
+    if (!pmConfig.model?.trim()) return "未配置模型名（model）";
+    return null;
+  }
+
+  /** 轻量连通性探测：发一条最短请求，确认端点和模型真的能用 */
+  async function pmProbe(): Promise<string | null> {
+    const staticProblem = pmReadiness();
+    if (staticProblem) return staticProblem;
+    const ctrl = new AbortController();
+    // 探测走短超时，别让用户等满决策超时
+    const timer = setTimeout(() => ctrl.abort(), Math.min(15000, pmConfig.timeoutMs));
+    try {
+      const headers: Record<string, string> = { "content-type": "application/json" };
+      if (pmConfig.apiKey) headers.authorization = "Bearer " + pmConfig.apiKey;
+      const res = await fetch(pmConfig.baseUrl + "/chat/completions", {
+        method: "POST",
+        headers,
+        signal: ctrl.signal,
+        body: JSON.stringify({
+          model: pmConfig.model,
+          max_tokens: 8,
+          messages: [{ role: "user", content: "ping" }]
+        })
+      });
+      if (!res.ok) {
+        const detail = (await res.text().catch(() => "")).slice(0, 200);
+        return "模型端点返回 HTTP " + res.status + (detail ? "：" + detail : "");
+      }
+      return null;
+    } catch (err: any) {
+      if (err?.name === "AbortError") return "模型端点超时（" + pmConfig.baseUrl + "）";
+      return "模型端点不可达（" + pmConfig.baseUrl + "）：" + String(err?.message ?? err);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   function persistMemory(): void {
     try { saveMemory(pmFiles.memory, pmMemory); }
     catch (err: any) { log("[pm] 记忆落盘失败: " + String(err?.message ?? err)); }
@@ -1049,6 +1094,12 @@ export function createServer(options: ServerOptions): http.Server {
       }
       return;
     }
+    if (req.method === "POST" && url.pathname === "/console/pm/probe") {
+      const problem = await pmProbe();
+      res.writeHead(200, { "content-type": "application/json", connection: "close" });
+      res.end(JSON.stringify(problem ? { ok: false, error: problem } : { ok: true }));
+      return;
+    }
     if (req.method === "GET" && url.pathname === "/console/pm/decisions") {
       res.writeHead(200, { "content-type": "application/json", connection: "close" });
       const limit = Math.min(Number(url.searchParams.get("limit")) || 20, 100);
@@ -1063,6 +1114,17 @@ export function createServer(options: ServerOptions): http.Server {
         res.writeHead(200, { "content-type": "application/json", connection: "close" });
         res.end(JSON.stringify({ ok: false, error: "mode 只能是 human 或 pm" }));
         return;
+      }
+      // 接管前必须确认模型真的能用：配置缺失或端点不通时接管，
+      // 等于让所有跨工单派发停在一个不存在的 LLM 后面，只能等 60s 超时降级
+      if (mode === "pm") {
+        const problem = await pmProbe();
+        if (problem) {
+          log("[pm] 拒绝接管：" + problem);
+          res.writeHead(200, { "content-type": "application/json", connection: "close" });
+          res.end(JSON.stringify({ ok: false, error: problem }));
+          return;
+        }
       }
       gate.setMode(mode, "human-console");
       // enabled 与派发权保持一致：配置文件里那一项就是当前是否接管

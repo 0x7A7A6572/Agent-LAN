@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { Bot, CircleAlert, Play, Square, TriangleAlert } from 'lucide-vue-next'
+import { Bot, CircleAlert, Play, Square, TriangleAlert, Zap } from 'lucide-vue-next'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { fetchPmConfig, fetchPmDecisions, savePmConfig, setPmMode } from '@/api/console'
+import { fetchPmConfig, fetchPmDecisions, probePmModel, savePmConfig, setPmMode } from '@/api/console'
 import { useConsoleStore } from '@/stores/console'
 import type { PmConfigView, PmDecisionView } from '@/types/console'
 
@@ -29,6 +29,8 @@ const decisions = ref<PmDecisionView[]>([])
 const apiKey = ref('')
 const busy = ref(false)
 const msg = ref('')
+/** 提示消息的严重程度：失败要显眼，别被当成切换成功 */
+const msgKind = ref<'ok' | 'error'>('ok')
 
 const mode = computed(() => store.pmState.mode)
 const active = computed(() => mode.value === 'pm')
@@ -45,8 +47,27 @@ async function toggle() {
   try {
     const next = active.value || degraded.value ? 'human' : 'pm'
     const r = await setPmMode(next)
-    msg.value = r.ok ? '已切换到' + (next === 'pm' ? ' PM 接管' : '人工模式') : r.error || '切换失败'
+    if (r.ok) {
+      msgKind.value = 'ok'
+      msg.value = '已切换到' + (next === 'pm' ? ' PM 接管' : '人工模式')
+    } else {
+      // 服务端会带回具体原因（未配模型 / 端点不可达 / HTTP 401 等），原样展示
+      msgKind.value = 'error'
+      msg.value = r.error || '切换失败'
+    }
     await store.refreshPmState()
+  } finally {
+    busy.value = false
+  }
+}
+
+// 单独测试模型连通性，不用先接管
+async function probe() {
+  busy.value = true
+  try {
+    const r = await probePmModel()
+    msgKind.value = r.ok ? 'ok' : 'error'
+    msg.value = r.ok ? '模型连通，可以接管' : r.error || '模型不可用'
   } finally {
     busy.value = false
   }
@@ -109,7 +130,13 @@ defineExpose({ reload: load })
           <Play v-else class="h-3.5 w-3.5" />
           {{ active || degraded ? '收回派发权' : '交给 PM 接管' }}
         </Button>
-        <span v-if="msg" class="text-xs text-muted-foreground">{{ msg }}</span>
+        <Button v-if="!active" size="sm" variant="ghost" :disabled="busy" @click="probe">
+          <Zap class="h-3.5 w-3.5" />
+          测试模型
+        </Button>
+        <span v-if="msg" class="text-xs" :class="msgKind === 'error' ? 'text-destructive' : 'text-muted-foreground'">
+          {{ msg }}
+        </span>
       </CardContent>
     </Card>
 

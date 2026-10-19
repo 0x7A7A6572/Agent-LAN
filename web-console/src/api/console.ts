@@ -39,6 +39,11 @@ export const savePmConfig = (patch: Partial<PmConfigView> & { apiKey?: string })
     body: JSON.stringify(patch),
   }).then(r => r.json() as Promise<{ ok: boolean; error?: string; config?: PmConfigView }>)
 
+export const probePmModel = () =>
+  fetch('/console/pm/probe', { method: 'POST' }).then(r =>
+    r.json() as Promise<{ ok: boolean; error?: string }>,
+  )
+
 export const setPmMode = (mode: 'human' | 'pm') =>
   fetch('/console/pm/mode', {
     method: 'POST',
