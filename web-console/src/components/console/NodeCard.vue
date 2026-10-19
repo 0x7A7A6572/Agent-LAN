@@ -84,6 +84,11 @@ async function send() {
       <div class="flex items-center gap-2">
         <img v-if="logo" :src="logo" alt="" class="size-5 rounded object-contain" />
         <CardTitle class="text-sm font-medium">{{ presence.card.name }}</CardTitle>
+        <span
+          v-if="presence.demo"
+          class="rounded border border-dashed border-muted-foreground/40 px-1 text-[10px] text-muted-foreground"
+          title="本地演示节点，不参与真实派发"
+        >演示</span>
         <Badge
           variant="outline"
           class="ml-auto gap-1.5 line-clamp-1"

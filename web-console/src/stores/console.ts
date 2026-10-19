@@ -8,7 +8,9 @@ export const useConsoleStore = defineStore('console', () => {
   const rawPresences = ref<Presence[]>([])
   const sseStatus = ref<'connecting' | 'live' | 'error'>('connecting')
 
-  // 演示节点：仅在完全没有真实节点时使用，让拓扑视图能看清结构；接上真实节点即自动消失
+  // 演示节点开关：默认开。开时若真实节点不足 6 个，用演示节点补位（演示的排在前面且不重复）
+  const showDemo = ref(true)
+
   const DEMO_PRESENCES: Presence[] = [
     { card: { name: 'demo-fe', url: 'inbound', version: '0.0.1' }, online: true, state: 'idle', role: 'frontend', groupHost: '10.0.0.21', lastSeen: 0, agent: 'dsh' },
     { card: { name: 'demo-be', url: 'inbound', version: '0.0.1' }, online: true, state: 'working', role: 'backend', workingOn: '订单接口', groupHost: '10.0.0.22', lastSeen: 0, agent: 'dsh' },
@@ -18,11 +20,28 @@ export const useConsoleStore = defineStore('console', () => {
     { card: { name: 'demo-pm', url: 'inbound', version: '0.0.1' }, online: false, role: 'requirement', groupHost: '10.0.0.40', lastSeen: 0, agent: 'dsh' },
   ]
 
-  /** 对外名册：真实节点优先；一个都没有时用演示数据填充视图 */
-  const presences = computed<Presence[]>(() =>
-    rawPresences.value.length ? rawPresences.value : DEMO_PRESENCES
-  )
-  const demoMode = computed(() => rawPresences.value.length === 0)
+  /**
+   * 对外名册：真实节点在前，演示节点在后补位。
+   * 之前是"有真实节点就整体替换掉演示节点"，导致真实节点一上线演示数据就消失；
+   * 现在改成补位：演示节点只补到阈值，且打 demo 标记便于区分。
+   */
+  const DEMO_FILL_TO = 6
+  const presences = computed<Presence[]>(() => {
+    const real = rawPresences.value
+    if (!showDemo.value) return real
+    const need = Math.max(0, DEMO_FILL_TO - real.length)
+    if (!need) return real
+    // 真实节点可能恰好重名，按名字去重
+    const taken = new Set(real.map(p => p.card.name))
+    const fill = DEMO_PRESENCES.filter(p => !taken.has(p.card.name)).slice(0, need)
+    return [...real, ...fill.map(p => ({ ...p, demo: true }))]
+  })
+  /** 当前视图里是否混有演示节点 */
+  const demoMode = computed(() => presences.value.some(p => p.demo))
+
+  function toggleDemo() {
+    showDemo.value = !showDemo.value
+  }
 
   // 等待人工确认：名册里任一节点带 waitingFor 即弹提示（已提醒过的节点不重复弹）
   const waitingNodes = computed(() => presences.value.filter(p => p.waitingFor))
@@ -174,6 +193,8 @@ export const useConsoleStore = defineStore('console', () => {
   return {
     presences,
     demoMode,
+    showDemo,
+    toggleDemo,
     sseStatus,
     waitingNodes,
     waitingAlert,

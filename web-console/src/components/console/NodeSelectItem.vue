@@ -27,7 +27,8 @@ const dotClass = computed(() =>
         : 'bg-muted-foreground/40',
 )
 
-const disabled = computed(() => props.onlineOnly === true && !online.value)
+// 演示节点是本地占位，派给它服务端会报「目标不在线或未知」，选它就等于选了个坑
+const disabled = computed(() => props.presence.demo === true || (props.onlineOnly === true && !online.value))
 </script>
 
 <template>

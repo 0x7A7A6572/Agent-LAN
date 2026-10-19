@@ -16,6 +16,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'pick-role', name: string, role: string): void
   (e: 'mail', name: string): void
+  (e: 'toggle-demo'): void
 }>()
 
 // 视图尺寸跟随容器实测比例：分栏后拓扑变宽，固定 900x520 会让环形显得空
@@ -219,12 +220,15 @@ const links = computed(() =>
       </text>
     </svg>
 
-    <!-- 演示数据提示：真实节点为零时的占位，接上任何节点即消失 -->
+    <!-- 演示数据提示：这些是本地占位，不参与真实派发 -->
     <div
       v-if="demo"
-      class="absolute right-3 top-2.5 rounded-full border border-dashed border-muted-foreground/40 bg-background/70 px-2.5 py-1 text-[11px] text-muted-foreground backdrop-blur"
+      class="absolute right-3 top-2.5 flex items-center gap-1.5 rounded-full border border-dashed border-muted-foreground/40 bg-background/80 px-2.5 py-1 text-[11px] text-muted-foreground backdrop-blur"
     >
-      演示节点 · 接入真实节点后自动消失
+      <span>含演示节点（不可指派）</span>
+      <button class="underline-offset-2 hover:text-foreground hover:underline" @click="emit('toggle-demo')">
+        隐藏
+      </button>
     </div>
 
     <!-- 图例 -->

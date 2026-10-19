@@ -251,6 +251,7 @@ function openRedispatch(order: Order) {
               :pm-name="store.pmState.pmName"
               :demo="store.demoMode"
               @pick-role="onPickRole"
+              @toggle-demo="store.toggleDemo()"
             />
           </div>
         </div>
