@@ -39,6 +39,11 @@ export const savePmConfig = (patch: Partial<PmConfigView> & { apiKey?: string })
     body: JSON.stringify(patch),
   }).then(r => r.json() as Promise<{ ok: boolean; error?: string; config?: PmConfigView }>)
 
+export const fetchPmWorkbuddy = () =>
+  getJson<{ available: boolean; reason?: string; running: boolean; models: string[] }>('/console/pm/workbuddy').catch(
+    () => ({ available: false, reason: '探测失败', running: false, models: [] as string[] }),
+  )
+
 export const probePmModel = () =>
   fetch('/console/pm/probe', { method: 'POST' }).then(r =>
     r.json() as Promise<{ ok: boolean; error?: string }>,

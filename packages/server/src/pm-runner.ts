@@ -55,7 +55,8 @@ export async function runDecision(
     cfg.tokenBudget
   );
 
-  const call = await callPm(cfg, system, user);
+  // WorkBuddy shim 只回流式响应，需要按 SSE 拼包
+  const call = await callPm(cfg, system, user, cfg.provider === "workbuddy");
   if ("error" in call) {
     return {
       at: started,

@@ -6,7 +6,14 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { fetchPmConfig, fetchPmDecisions, probePmModel, savePmConfig, setPmMode } from '@/api/console'
+import {
+  fetchPmConfig,
+  fetchPmDecisions,
+  fetchPmWorkbuddy,
+  probePmModel,
+  savePmConfig,
+  setPmMode,
+} from '@/api/console'
 import { useConsoleStore } from '@/stores/console'
 import type { PmConfigView, PmDecisionView } from '@/types/console'
 
@@ -14,6 +21,7 @@ const store = useConsoleStore()
 // 给默认值而非 null：模板里 v-model 需要可写对象，v-if 无法收窄到 ref
 const config = ref<PmConfigView>({
   enabled: false,
+  provider: 'openai',
   baseUrl: 'http://127.0.0.1:11434/v1',
   model: 'qwen2.5:14b',
   temperature: 0.2,
@@ -27,6 +35,12 @@ const config = ref<PmConfigView>({
 const loaded = ref(false)
 const decisions = ref<PmDecisionView[]>([])
 const apiKey = ref('')
+// WorkBuddy 直连的可用性探测结果
+const wb = ref<{ available: boolean; reason?: string; running: boolean; models: string[] }>({
+  available: false,
+  running: false,
+  models: [],
+})
 const busy = ref(false)
 const msg = ref('')
 /** 提示消息的严重程度：失败要显眼，别被当成切换成功 */
@@ -40,6 +54,7 @@ async function load() {
   const c = await fetchPmConfig()
   if (c) { config.value = c; loaded.value = true }
   decisions.value = (await fetchPmDecisions(20)).decisions ?? []
+  wb.value = await fetchPmWorkbuddy()
 }
 
 async function toggle() {
@@ -144,26 +159,69 @@ defineExpose({ reload: load })
     <Card v-if="loaded">
       <CardHeader>
         <CardTitle class="text-sm">模型</CardTitle>
-        <CardDescription>任意 OpenAI 兼容端点。本地模型填 http://127.0.0.1:11434/v1 这类地址，key 可留空。</CardDescription>
+        <CardDescription>
+          {{
+            config.provider === 'workbuddy'
+              ? '直连本机 WorkBuddy 桌面版：复用它的登录态，不用填地址和 key。'
+              : '任意 OpenAI 兼容端点。本地模型填 http://127.0.0.1:11434/v1 这类地址，key 可留空。'
+          }}
+        </CardDescription>
       </CardHeader>
       <CardContent class="grid gap-3">
-        <div class="grid gap-3 sm:grid-cols-2">
-          <div class="grid gap-1.5">
-            <Label class="text-xs">baseUrl</Label>
-            <Input v-model="config.baseUrl" class="h-8 text-xs" placeholder="http://127.0.0.1:11434/v1" />
-          </div>
+        <!-- 来源切换：手填端点 / 直连本机 WorkBuddy -->
+        <div class="flex items-center gap-2">
+          <Button
+            size="sm"
+            :variant="config.provider === 'openai' ? 'default' : 'outline'"
+            @click="config.provider = 'openai'"
+          >
+            通用端点
+          </Button>
+          <Button
+            size="sm"
+            :variant="config.provider === 'workbuddy' ? 'default' : 'outline'"
+            :disabled="!wb.available"
+            :title="wb.available ? '直连本机 WorkBuddy' : wb.reason"
+            @click="config.provider = 'workbuddy'"
+          >
+            <Zap class="h-3.5 w-3.5" />
+            直连 WorkBuddy
+          </Button>
+        </div>
+        <p v-if="!wb.available" class="text-xs text-muted-foreground">{{ wb.reason }}</p>
+
+        <template v-if="config.provider === 'workbuddy'">
           <div class="grid gap-1.5">
             <Label class="text-xs">模型名</Label>
-            <Input v-model="config.model" class="h-8 text-xs" placeholder="qwen2.5:14b" />
+            <Input v-model="config.model" class="h-8 text-xs" placeholder="deepseek-v4.1-flash" />
+            <p v-if="wb.models.length" class="text-[11px] text-muted-foreground">
+              可用：{{ wb.models.slice(0, 8).join(' / ') }}{{ wb.models.length > 8 ? ' 等' : '' }}
+            </p>
+            <p v-else class="text-[11px] text-muted-foreground">
+              首次接管时启动本地 shim 后才会列出模型，可先填 deepseek-v4.1-flash。
+            </p>
           </div>
-        </div>
-        <div class="grid gap-1.5">
-          <Label class="text-xs">
-            apiKey
-            <span class="ml-1 text-muted-foreground">{{ config.apiKeyConfigured ? '（已配置，留空表示不修改）' : '（未配置，本地模型可留空）' }}</span>
-          </Label>
-          <Input v-model="apiKey" type="password" class="h-8 text-xs" placeholder="sk-..." autocomplete="off" />
-        </div>
+        </template>
+
+        <template v-else>
+          <div class="grid gap-3 sm:grid-cols-2">
+            <div class="grid gap-1.5">
+              <Label class="text-xs">baseUrl</Label>
+              <Input v-model="config.baseUrl" class="h-8 text-xs" placeholder="http://127.0.0.1:11434/v1" />
+            </div>
+            <div class="grid gap-1.5">
+              <Label class="text-xs">模型名</Label>
+              <Input v-model="config.model" class="h-8 text-xs" placeholder="qwen2.5:14b" />
+            </div>
+          </div>
+          <div class="grid gap-1.5">
+            <Label class="text-xs">
+              apiKey
+              <span class="ml-1 text-muted-foreground">{{ config.apiKeyConfigured ? '（已配置，留空表示不修改）' : '（未配置，本地模型可留空）' }}</span>
+            </Label>
+            <Input v-model="apiKey" type="password" class="h-8 text-xs" placeholder="sk-..." autocomplete="off" />
+          </div>
+        </template>
         <div class="grid gap-3 sm:grid-cols-3">
           <div class="grid gap-1.5">
             <Label class="text-xs">温度</Label>

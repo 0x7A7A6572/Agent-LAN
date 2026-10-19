@@ -20,6 +20,8 @@ import type { HubEvent } from "./events.js";
 import { loadConfig, loadMemory, saveConfig, saveMemory, pmPaths } from "./pm.js";
 import type { PmConfig, PmMemory } from "./pm.js";
 import { runDecision } from "./pm-runner.js";
+import { probeEnvironment, startWorkbuddy } from "./workbuddy-provider.js";
+import type { WorkbuddyProvider } from "./workbuddy-provider.js";
 import { mcpHandle, type McpFacadeDeps } from "./mcp-facade.js";
 export { createTui } from "./tui.js";
 export { createRemoteProxy } from "./remote-proxy.js";
@@ -494,23 +496,65 @@ export function createServer(options: ServerOptions): http.Server {
    * @returns 具体问题描述；可用则返回 null
    */
   function pmReadiness(): string | null {
+    if (!pmConfig.model?.trim()) return "未配置模型名（model）";
+    // workbuddy 直连的端点由 shim 动态提供，不需要用户填 baseUrl / apiKey
+    if (pmConfig.provider === "workbuddy") return null;
     if (!pmConfig.baseUrl?.trim()) return "未配置模型地址（baseUrl）";
     if (!/^https?:\/\//i.test(pmConfig.baseUrl)) return "模型地址必须是 http(s) 开头：" + pmConfig.baseUrl;
     if (!pmConfig.model?.trim()) return "未配置模型名（model）";
     return null;
   }
 
+  // 本地 WorkBuddy 直连：按需启动，失败不影响其它 provider
+  let wbProvider: WorkbuddyProvider | null = null;
+  let wbStarting: Promise<string | null> | null = null;
+
+  /** 确保 workbuddy shim 就绪；返回失败原因或 null */
+  async function ensureWorkbuddy(): Promise<string | null> {
+    if (wbProvider) return null;
+    if (wbStarting) return wbStarting;
+    wbStarting = (async () => {
+      const r = await startWorkbuddy();
+      if ("error" in r) {
+        log("[pm] WorkBuddy 直连不可用: " + r.error);
+        return r.error;
+      }
+      wbProvider = r.provider;
+      log("[pm] WorkBuddy 直连就绪: " + wbProvider.baseUrl + "（" + wbProvider.models.length + " 个模型）");
+      return null;
+    })();
+    const err = await wbStarting;
+    wbStarting = null;
+    return err;
+  }
+
+  /** 按当前 provider 解析出实际要用的端点与密钥 */
+  function resolvedEndpoint(): { baseUrl: string; apiKey: string } | { error: string } {
+    if (pmConfig.provider === "workbuddy") {
+      if (!wbProvider) return { error: "WorkBuddy 直连尚未就绪" };
+      return { baseUrl: wbProvider.baseUrl, apiKey: wbProvider.token };
+    }
+    return { baseUrl: pmConfig.baseUrl, apiKey: pmConfig.apiKey };
+  }
+
   /** 轻量连通性探测：发一条最短请求，确认端点和模型真的能用 */
   async function pmProbe(): Promise<string | null> {
     const staticProblem = pmReadiness();
     if (staticProblem) return staticProblem;
+    // workbuddy 直连：先把 shim 拉起来，再用它的动态端点 + 一次性 token
+    if (pmConfig.provider === "workbuddy") {
+      const bootErr = await ensureWorkbuddy();
+      if (bootErr) return bootErr;
+    }
+    const endpoint = resolvedEndpoint();
+    if ("error" in endpoint) return endpoint.error;
     const ctrl = new AbortController();
     // 探测走短超时，别让用户等满决策超时
     const timer = setTimeout(() => ctrl.abort(), Math.min(15000, pmConfig.timeoutMs));
     try {
       const headers: Record<string, string> = { "content-type": "application/json" };
-      if (pmConfig.apiKey) headers.authorization = "Bearer " + pmConfig.apiKey;
-      const res = await fetch(pmConfig.baseUrl + "/chat/completions", {
+      if (endpoint.apiKey) headers.authorization = "Bearer " + endpoint.apiKey;
+      const res = await fetch(endpoint.baseUrl + "/chat/completions", {
         method: "POST",
         headers,
         signal: ctrl.signal,
@@ -526,8 +570,8 @@ export function createServer(options: ServerOptions): http.Server {
       }
       return null;
     } catch (err: any) {
-      if (err?.name === "AbortError") return "模型端点超时（" + pmConfig.baseUrl + "）";
-      return "模型端点不可达（" + pmConfig.baseUrl + "）：" + String(err?.message ?? err);
+      if (err?.name === "AbortError") return "模型端点超时（" + endpoint.baseUrl + "）";
+      return "模型端点不可达（" + endpoint.baseUrl + "）：" + String(err?.message ?? err);
     } finally {
       clearTimeout(timer);
     }
@@ -540,8 +584,23 @@ export function createServer(options: ServerOptions): http.Server {
 
   /** 一次决策：批次交给 LLM，动作逐条过校验后落地 */
   async function runPmBatch(batch: HubEvent[]): Promise<void> {
+    // workbuddy 直连的端点和 token 每次决策时解析：shim 端口与 bearer 可能随重启变化
+    let effective = pmConfig;
+    if (pmConfig.provider === "workbuddy") {
+      const bootErr = await ensureWorkbuddy();
+      if (bootErr) {
+        log("[pm] 决策跳过：WorkBuddy 不可用（" + bootErr + "）");
+        return;
+      }
+      const ep = resolvedEndpoint();
+      if ("error" in ep) {
+        log("[pm] 决策跳过：" + ep.error);
+        return;
+      }
+      effective = { ...pmConfig, baseUrl: ep.baseUrl, apiKey: ep.apiKey };
+    }
     const decision = await runDecision(batch, {
-      config: () => pmConfig,
+      config: () => effective,
       memory: () => pmMemory,
       policy: () => pmPolicy,
       openOrders: () => orderStore.list({}).filter(o => o.status !== "done" && o.status !== "canceled"),
@@ -1092,6 +1151,18 @@ export function createServer(options: ServerOptions): http.Server {
         res.writeHead(200, { "content-type": "application/json", connection: "close" });
         res.end(JSON.stringify({ ok: false, error: String(err?.message ?? err) }));
       }
+      return;
+    }
+    if (req.method === "GET" && url.pathname === "/console/pm/workbuddy") {
+      // 只报环境探测结果，不启动 shim（启动有成本，等用户真的选它再启）
+      const env = probeEnvironment();
+      res.writeHead(200, { "content-type": "application/json", connection: "close" });
+      res.end(JSON.stringify({
+        available: env.ok,
+        reason: env.reason,
+        running: !!wbProvider,
+        models: wbProvider?.models ?? []
+      }));
       return;
     }
     if (req.method === "POST" && url.pathname === "/console/pm/probe") {

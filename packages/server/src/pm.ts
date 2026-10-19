@@ -7,6 +7,8 @@ import type { HubEvent } from "./events.js";
 
 export interface PmConfig {
   enabled: boolean;
+  /** 模型来源：openai 任意兼容端点 / workbuddy 直连本机桌面版 */
+  provider: "openai" | "workbuddy";
   baseUrl: string;
   apiKey: string;
   model: string;
@@ -20,6 +22,7 @@ export interface PmConfig {
 
 export const PM_CONFIG_DEFAULTS: PmConfig = {
   enabled: false,
+  provider: "openai",
   baseUrl: "http://127.0.0.1:11434/v1",
   apiKey: "",
   model: "qwen2.5:14b",
@@ -82,6 +85,7 @@ export function sanitizeConfig(c: PmConfig): PmConfig {
   };
   return {
     enabled: !!c.enabled,
+    provider: c.provider === "workbuddy" ? "workbuddy" : "openai",
     baseUrl: typeof c.baseUrl === "string" && c.baseUrl.trim() ? c.baseUrl.trim().replace(/\/+$/, "") : PM_CONFIG_DEFAULTS.baseUrl,
     apiKey: typeof c.apiKey === "string" ? c.apiKey : "",
     model: typeof c.model === "string" && c.model.trim() ? c.model.trim() : PM_CONFIG_DEFAULTS.model,
@@ -255,8 +259,16 @@ export function parseDecision(text: string, maxActions: number, durationMs: numb
   return { actions, reasoning: typeof obj.reasoning === "string" ? obj.reasoning : "" };
 }
 
-/** 调 OpenAI 兼容端点；超时/网络错误一律返回 error，不重试 */
-export async function callPm(cfg: PmConfig, system: string, user: string): Promise<{ text: string } | { error: string }> {
+/**
+ * 调 OpenAI 兼容端点；超时/网络错误一律返回 error，不重试。
+ * @param sse 端点只回流式响应时置 true（本地 WorkBuddy shim 即如此），由调用方拼回完整文本
+ */
+export async function callPm(
+  cfg: PmConfig,
+  system: string,
+  user: string,
+  sse = false
+): Promise<{ text: string } | { error: string }> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), cfg.timeoutMs);
   try {
@@ -278,6 +290,13 @@ export async function callPm(cfg: PmConfig, system: string, user: string): Promi
     if (!res.ok) {
       const detail = (await res.text().catch(() => "")).slice(0, 300);
       return { error: "HTTP " + res.status + ": " + detail };
+    }
+    if (sse) {
+      const { readSseCompletion } = await import("./workbuddy-provider.js");
+      const text = await readSseCompletion(res, cfg.timeoutMs);
+      if (typeof text !== "string") return text;
+      if (!text.trim()) return { error: "响应里没有 content" };
+      return { text };
     }
     const data = await res.json() as any;
     const text = data?.choices?.[0]?.message?.content;

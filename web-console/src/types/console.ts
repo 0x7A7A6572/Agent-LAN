@@ -41,6 +41,8 @@ export interface PmState {
 
 export interface PmConfigView {
   enabled: boolean
+  /** 模型来源：openai 任意兼容端点 / workbuddy 直连本机桌面版 */
+  provider: 'openai' | 'workbuddy'
   baseUrl: string
   model: string
   temperature: number
