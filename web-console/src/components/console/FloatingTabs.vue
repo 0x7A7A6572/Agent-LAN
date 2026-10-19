@@ -35,10 +35,11 @@ if (typeof window !== 'undefined') window.addEventListener('resize', syncIndicat
 </script>
 
 <template>
-  <div class="pointer-events-none fixed inset-x-0 bottom-7 z-30 flex justify-center px-4">
+  <div class="pointer-events-none fixed inset-x-0 bottom-5 z-30 flex justify-center px-4">
     <div
       ref="railRef"
-      class="pointer-events-auto relative flex items-center gap-1.5 rounded-full border border-border/70 bg-background/92 p-2 shadow-2xl shadow-black/20 backdrop-blur-lg"
+      class="pointer-events-auto relative flex origin-bottom items-center gap-1.5 rounded-full border border-border/70 bg-background/92 p-2 shadow-2xl shadow-black/20 backdrop-blur-lg"
+      style="transform: scale(0.8)"
     >
       <!-- 滑动指示器：一个元素表达"当前在哪"，避免每颗按钮各自高亮 -->
       <span

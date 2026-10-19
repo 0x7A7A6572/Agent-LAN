@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { ChevronRight, FolderOpen, FileText, Network, ScrollText, Plus, Settings, SlidersHorizontal, Ticket, UserCog, TriangleAlert, X } from 'lucide-vue-next'
+import { ChevronRight, FolderOpen, FileText, Network, ScrollText, Plus, SlidersHorizontal, Ticket, UserCog, TriangleAlert, X } from 'lucide-vue-next'
 import { useConsoleStore } from '@/stores/console'
 import { setNodeRole, saveRoles } from '@/api/console'
 import CreateOrderDialog from '@/components/console/CreateOrderDialog.vue'
@@ -21,14 +21,6 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
 import type { Order, OrderAttachment, OrderStatus } from '@/types/console'
 
 const store = useConsoleStore()
@@ -170,31 +162,10 @@ function openRedispatch(order: Order) {
       </div>
       <!-- <span class="text-sm font-medium">Documents</span> -->
       <span class="hidden text-xs text-muted-foreground lg:inline">{{ store.summary }}</span>
-      <span class="ml-auto flex items-center gap-2">
-        <DropdownMenu>
-          <DropdownMenuTrigger as-child>
-            <Button variant="secondary" size="icon" class="rounded-full" title="设置">
-              <Settings class="h-4 w-4" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" class="w-48">
-            <DropdownMenuLabel>设置</DropdownMenuLabel>
-            <DropdownMenuItem @click="rolesOpen = true">
-              <UserCog class="h-4 w-4" />
-              角色库
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuLabel>帮助</DropdownMenuLabel>
-            <DropdownMenuItem @click="installOpen = true">
-              <FileText class="h-4 w-4" />
-              安装说明
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </span>
+
     </header>
 
-      <main class="flex min-h-0 flex-1 flex-col gap-4 p-4 pb-28 md:gap-6 md:p-6 md:pb-28">
+      <main class="flex min-h-0 flex-1 flex-col gap-4 p-4 pb-24 md:gap-6 md:p-6 md:pb-24">
         <!-- 人工确认提醒：有节点卡在等待人类答复时置顶，可关闭 -->
         <div
           v-if="store.waitingAlert.length"
