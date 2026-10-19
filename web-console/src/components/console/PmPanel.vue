@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Label } from '@/components/ui/label'
 import {
   fetchPmConfig,
@@ -192,30 +193,26 @@ defineExpose({ reload: load })
         </CardDescription>
       </CardHeader>
       <CardContent class="grid gap-3">
-        <!-- 来源切换：手填端点 / 直连本机 WorkBuddy -->
-        <div class="flex items-center gap-2">
-          <Button
-            size="sm"
-            :variant="config.provider === 'openai' ? 'default' : 'outline'"
-            @click="config.provider = 'openai'"
-          >
-            通用端点
-          </Button>
-          <Button
-            size="sm"
-            :variant="config.provider === 'workbuddy' ? 'default' : 'outline'"
-            :disabled="!wb.available"
-            :title="wb.available ? '直连本机 WorkBuddy' : wb.reason"
-            @click="useWorkbuddy()"
-          >
-            <Zap class="h-3.5 w-3.5" />
-            直连 WorkBuddy
-          </Button>
-        </div>
         <p v-if="!wb.available" class="text-xs text-muted-foreground">{{ wb.reason }}</p>
 
-        <template v-if="config.provider === 'workbuddy'">
-          <div class="grid gap-1.5">
+        <Tabs
+          :model-value="config.provider"
+          @update:model-value="(v: string | number) => v === 'workbuddy' ? useWorkbuddy() : (config.provider = 'openai')"
+        >
+          <TabsList class="w-fit">
+            <TabsTrigger value="openai" class="text-xs">通用端点</TabsTrigger>
+            <TabsTrigger
+              value="workbuddy"
+              class="gap-1 text-xs"
+              :disabled="!wb.available"
+              :title="wb.available ? '直连本机 WorkBuddy' : wb.reason"
+            >
+              <Zap class="h-3.5 w-3.5" />
+              直连 WorkBuddy
+            </TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="workbuddy" class="grid gap-1.5 mt-1">
             <Label class="text-xs">模型</Label>
             <Select v-model="config.model">
               <SelectTrigger class="h-8 w-full text-xs">
@@ -232,10 +229,9 @@ defineExpose({ reload: load })
             <p v-else-if="wb.models.length" class="text-[11px] text-muted-foreground">
               共 {{ wb.models.length }} 个可用模型，来自本机 WorkBuddy 账号
             </p>
-          </div>
-        </template>
+          </TabsContent>
 
-        <template v-else>
+          <TabsContent value="openai" class="mt-1">
           <div class="grid gap-3 sm:grid-cols-2">
             <div class="grid gap-1.5">
               <Label class="text-xs">baseUrl</Label>
@@ -253,7 +249,8 @@ defineExpose({ reload: load })
             </Label>
             <Input v-model="apiKey" type="password" class="h-8 text-xs" placeholder="sk-..." autocomplete="off" />
           </div>
-        </template>
+          </TabsContent>
+        </Tabs>
         <div class="grid gap-3 sm:grid-cols-3">
           <div class="grid gap-1.5">
             <Label class="text-xs">温度</Label>
