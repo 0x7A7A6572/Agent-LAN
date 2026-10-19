@@ -17,7 +17,7 @@ export interface McpFacadeDeps {
   /** 上报结果；by 为上报节点名，驱动执行中状态 */
   report: (taskId: string, state: string, text?: string, artifacts?: { name: string; uri: string }[], by?: string) => { ok: boolean; reason?: string };
   /** 派任务给指定节点 */
-  sendTask: (prompt: string, target?: string) => Promise<{ taskId: string; state: string }>;
+  sendTask: (prompt: string, target?: string, actor?: string) => Promise<{ taskId: string; state: string }>;
   /** 查任务 */
   getTask: (taskId: string) => unknown;
   /** 列出在册节点 */
@@ -119,7 +119,8 @@ const TOOLS = [
       type: "object",
       properties: {
         prompt: { type: "string", description: "任务内容" },
-        target: { type: "string", description: "目标节点名，用 mac_list_agents 查" }
+        target: { type: "string", description: "目标节点名，用 mac_list_agents 查" },
+        from: { type: "string", description: "你的节点名。PM 接管期间派发要据此校验权限，必填" }
       },
       required: ["prompt"]
     }
@@ -416,7 +417,11 @@ export async function mcpHandle(raw: string, req: http.IncomingMessage, res: htt
             return;
           }
           case "mac_send_task": {
-            const r = await deps.sendTask(String(a.prompt), a.target ? String(a.target) : undefined);
+            const r = await deps.sendTask(
+              String(a.prompt),
+              a.target ? String(a.target) : undefined,
+              a.from ? String(a.from) : undefined
+            );
             reply(toolResult(r));
             return;
           }

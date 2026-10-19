@@ -25,6 +25,20 @@ export interface Presence {
   queuedCount?: number
 }
 
+/** 派发权状态：human 人工模式 / pm PM 接管 / degraded PM 超时已放行 */
+export type DispatchMode = 'human' | 'pm' | 'degraded'
+
+export interface PmState {
+  mode: DispatchMode
+  /** PM 节点名；pm 模式下的调度中枢 */
+  pmName?: string
+  enabled: boolean
+  /** 已配置模型名，前端不显示 key */
+  model?: string
+  baseUrl?: string
+  apiKeyConfigured?: boolean
+}
+
 export type OrderStatus =
   | 'backlog'
   | 'analyzing'

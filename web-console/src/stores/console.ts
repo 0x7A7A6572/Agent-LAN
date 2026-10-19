@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import * as api from '@/api/console'
-import type { Order, OrderAttachment, OrderStatus, Presence } from '@/types/console'
+import type { Order, OrderAttachment, OrderStatus, PmState, Presence } from '@/types/console'
 
 export const useConsoleStore = defineStore('console', () => {
   // 名册：SSE 全量推送，直接整表替换
@@ -86,6 +86,14 @@ export const useConsoleStore = defineStore('console', () => {
     return roles.value
   }
 
+  // PM 派发权状态：轮询轻量接口，拓扑中心据此显示 Supervisor / 人工 / 降级
+  const pmState = ref<PmState>({ mode: 'human', enabled: false })
+
+  async function refreshPmState() {
+    pmState.value = await api.fetchPmState()
+    return pmState.value
+  }
+
   async function refreshOrders() {
     ordersLoading.value = true
     try {
@@ -166,6 +174,8 @@ export const useConsoleStore = defineStore('console', () => {
     refreshOrders,
     updateOrderStatus,
     editOrder,
+    pmState,
+    refreshPmState,
     createOrder,
     deleteOrder,
     cancelOrder,

@@ -14,6 +14,7 @@ import { FileChannel } from "./file-channel.js";
 import { OrderStore } from "./orders.js";
 import type { Order } from "./types.js";
 import { RoleStore } from "./roles.js";
+import { DispatchGate } from "./gate.js";
 import { mcpHandle, type McpFacadeDeps } from "./mcp-facade.js";
 export { createTui } from "./tui.js";
 export { createRemoteProxy } from "./remote-proxy.js";
@@ -113,7 +114,13 @@ export function createServer(options: ServerOptions): http.Server {
     for (const t of Array.isArray(raw) ? raw : []) tasks.set(t.id, t);
   } catch { /* 首次启动无文件 */ }
 
-  function enqueueFor(name: string, task: Task): void {
+  function enqueueFor(name: string, task: Task, actor = "human-console", orderId?: string): void {
+    // 派发权门禁：PM 接管期间，跨工单派发必须经 Supervisor
+    const verdict = gate.check({ actor, target: name, orderId });
+    if (!verdict.allow) {
+      log("[gate] 拒绝派发 -> " + name + "：" + (verdict.reason ?? ""));
+      throw { code: -32603, message: verdict.reason ?? "派发被 Supervisor 门禁拦截" };
+    }
     const waiters = pullWaiters.get(name);
     if (waiters?.length) {
       const w = waiters.shift()!;
@@ -336,7 +343,7 @@ export function createServer(options: ServerOptions): http.Server {
     const task: Task = { id: randomUUID(), state: "submitted", prompt: orderPrompt(o), artifacts: [], createdAt: now, updatedAt: now };
     tasks.set(task.id, task);
     saveTasks();
-    enqueueFor(assignee, task);
+    enqueueFor(assignee, task, by, o.id);
     log("-> order " + o.id + " dispatched to " + assignee + " (by " + by + ")");
   }
 
@@ -420,6 +427,9 @@ export function createServer(options: ServerOptions): http.Server {
     ?? path.join(path.resolve(options.filesDir ?? ".mac-files"), "..", ".orders.json"));
   const roleStore = new RoleStore(options.rolesPath
     ?? path.join(path.resolve(options.filesDir ?? ".mac-files"), "..", ".roles.json"));
+  // 派发权门禁：调度控制流归 Supervisor，PM 只是临时持有者
+  const gate = new DispatchGate({ pmTimeoutMs: 60000, onLog: log });
+  gate.start();
   // 角色回写：控制台改角色后同步写进该节点本地的 node.json。
   // 仅同机有效——hub 不知道远端节点安装目录，跨机器由节点自己同步。
   // node.json 是 worker.sh 的身份文件，写坏会导致节点起不来，故一律尽力而为。
@@ -541,7 +551,7 @@ export function createServer(options: ServerOptions): http.Server {
   const presenceTimer = setInterval(() => pushPresence(), 5000);
   presenceTimer.unref?.();
 
-  async function handleMessageSend(params: any, remote: string): Promise<unknown> {
+  async function handleMessageSend(params: any, remote: string, actor?: string): Promise<unknown> {
     const prompt: string = params?.prompt ?? params?.message?.parts?.[0]?.text;
     if (typeof prompt !== "string") throw { code: -32602, message: "缺少 prompt" };
     const now = new Date().toISOString();
@@ -567,7 +577,7 @@ export function createServer(options: ServerOptions): http.Server {
         log("-> task " + task.id.slice(0, 8) + " forward to " + target + ": " + prompt.slice(0, 60));
       } else if (presence) {
         // 入站客户端：入队等它长轮询来领
-        enqueueFor(target, task);
+        enqueueFor(target, task, actor ?? remote);
         log("-> task " + task.id.slice(0, 8) + " queued for " + target + ": " + prompt.slice(0, 60));
         return { task: { id: task.id, state: "submitted", target } };
       } else {
@@ -606,10 +616,10 @@ export function createServer(options: ServerOptions): http.Server {
     }
   }
 
-  async function handleRpc(method: string, params: any, remote: string, url: URL, conn: { localAddress?: string; localPort?: number }): Promise<unknown> {
+  async function handleRpc(method: string, params: any, remote: string, url: URL, conn: { localAddress?: string; localPort?: number }, actor?: string): Promise<unknown> {
     switch (method) {
       case A2A_METHODS.MESSAGE_SEND:
-        return handleMessageSend(params, remote);
+        return handleMessageSend(params, remote, actor);
       case "presence/heartbeat": {
         const card = params?.card as AgentCard;
         if (!card?.name) throw { code: -32602, message: "缺少 card.name" };
@@ -869,6 +879,30 @@ export function createServer(options: ServerOptions): http.Server {
       res.end(JSON.stringify({ roles: roleStore.all(), allowed: roleStore.allowed }));
       return;
     }
+    if (req.method === "GET" && url.pathname === "/console/pm/state") {
+      res.writeHead(200, { "content-type": "application/json", connection: "close" });
+      res.end(JSON.stringify({
+        mode: gate.current,
+        pmName: gate.pmNodeName,
+        enabled: gate.current !== "human"
+      }));
+      return;
+    }
+    if (req.method === "POST" && url.pathname === "/console/pm/mode") {
+      let body = "";
+      for await (const chunk of req) body += chunk;
+      const { mode } = JSON.parse(body || "{}");
+      if (mode !== "human" && mode !== "pm") {
+        res.writeHead(200, { "content-type": "application/json", connection: "close" });
+        res.end(JSON.stringify({ ok: false, error: "mode 只能是 human 或 pm" }));
+        return;
+      }
+      gate.setMode(mode, "human-console");
+      pushPresence();
+      res.writeHead(200, { "content-type": "application/json", connection: "close" });
+      res.end(JSON.stringify({ ok: true, mode: gate.current }));
+      return;
+    }
     if (req.method === "PUT" && url.pathname === "/console/roles/allowed") {
       let body = "";
       for await (const chunk of req) body += chunk;
@@ -1112,8 +1146,8 @@ const mcpDeps: McpFacadeDeps = {
     }
     return reportResult(taskId, state, text, artifacts, by);
   },
-  sendTask: async (prompt, target) => {
-    const r = await handleRpc("message/send", { prompt, target }, "mcp", new URL("http://mcp.local"), { localAddress: "127.0.0.1", localPort: options.port }) as { task: { id: string; state: string } };
+  sendTask: async (prompt, target, actor) => {
+    const r = await handleRpc("message/send", { prompt, target }, "mcp", new URL("http://mcp.local"), { localAddress: "127.0.0.1", localPort: options.port }, actor) as { task: { id: string; state: string } };
     return { taskId: r.task.id, state: r.task.state };
   },
   getTask: id => tasks.get(id) ?? { error: "任务不存在: " + id },

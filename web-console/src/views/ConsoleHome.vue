@@ -1,10 +1,13 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { FolderOpen, FileText, Plus, Settings, UserCog, TriangleAlert, X } from 'lucide-vue-next'
+import { ChevronRight, FolderOpen, FileText, Network, ScrollText, Plus, Settings, SlidersHorizontal, Ticket, UserCog, TriangleAlert, X } from 'lucide-vue-next'
 import { useConsoleStore } from '@/stores/console'
 import { setNodeRole, saveRoles } from '@/api/console'
 import CreateOrderDialog from '@/components/console/CreateOrderDialog.vue'
 import NodeCard from '@/components/console/NodeCard.vue'
+import NodeTopology from '@/components/console/NodeTopology.vue'
+import FloatingTabs from '@/components/console/FloatingTabs.vue'
+import type { FloatingTab } from '@/components/console/floating-tabs'
 import OrderPanel from '@/components/console/OrderPanel.vue'
 import LogPanel from '@/components/console/LogPanel.vue'
 import RolesDialog from '@/components/console/RolesDialog.vue'
@@ -34,6 +37,17 @@ const pickOpen = ref(false)
 const pickName = ref('')
 const pickCurrent = ref('')
 const sidebarCreateOpen = ref(false)
+const nodesOpen = ref(false)
+
+// 悬浮 tab：节点 / 工单 / 日志 / 设置
+type ViewKey = 'nodes' | 'orders' | 'logs' | 'settings'
+const view = ref<ViewKey>('nodes')
+const tabs = computed<FloatingTab[]>(() => [
+  { key: 'nodes', label: '节点', icon: Network, badge: store.onlineNodes.length, alert: store.waitingAlert.length > 0 },
+  { key: 'orders', label: '工单', icon: Ticket, badge: store.orders.filter(o => o.status !== 'done' && o.status !== 'canceled').length },
+  { key: 'logs', label: '日志', icon: ScrollText },
+  { key: 'settings', label: '设置', icon: SlidersHorizontal },
+])
 
 function log(line: string) {
   store.logs = [...store.logs, line]
@@ -45,6 +59,8 @@ onMounted(() => {
   setInterval(store.pollLogs, 2000)
   store.loadRoles()
   store.refreshOrders()
+  store.refreshPmState()
+  setInterval(store.refreshPmState, 5000)
 })
 
 // 工单状态 Tab：blocked 单列，等人工的工单需要人立刻看见
@@ -190,22 +206,37 @@ async function onOrderRedispatch(order: Order) {
           </Button>
         </div>
 
-        <!-- 节点卡行：横向滚动，截图同款 -->
-        <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          <NodeCard
-            v-for="p in store.presences.slice(0, 8)"
-            :key="p.card.name"
-            :presence="p"
-            @pick-role="onPickRole"
-            @delete-node="onDeleteNode"
-          />
+        <!-- 节点视图：拓扑 + 详情卡 -->
+        <div v-show="view === 'nodes'" class="flex flex-col gap-4">
+        <!-- 局域网拓扑：Supervisor 在中心，派发链路随接管状态高亮 -->
+        <NodeTopology
+          :presences="store.presences"
+          :dispatch-mode="store.pmState.mode"
+          :pm-name="store.pmState.pmName"
+          @pick-role="onPickRole"
+        />
+
+        <!-- 节点卡：拓扑的详情视图，承载留言/删节点等操作 -->
+        <div class="flex flex-col gap-3">
+          <Button variant="ghost" size="sm" class="w-fit gap-1.5 text-muted-foreground" @click="nodesOpen = !nodesOpen">
+            <ChevronRight class="h-3.5 w-3.5 transition-transform" :class="nodesOpen ? 'rotate-90' : ''" />
+            节点详情
+            <Badge variant="outline" class="text-[10px]">{{ store.presences.length }}</Badge>
+          </Button>
+          <div v-if="nodesOpen" class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <NodeCard
+              v-for="p in store.presences"
+              :key="p.card.name"
+              :presence="p"
+              @pick-role="onPickRole"
+              @delete-node="onDeleteNode"
+            />
+          </div>
         </div>
-        <div v-if="store.presences.length > 8" class="text-xs text-muted-foreground">
-          还有 {{ store.presences.length - 8 }} 个节点未展示
         </div>
 
-        <!-- 工单区：状态 Tab + 面板 -->
-        <div id="sec-orders">
+        <!-- 工单视图 -->
+        <div v-show="view === 'orders'" id="sec-orders">
           <Tabs v-model="activeTab" class="gap-4">
             <div class="flex items-center gap-2">
               <TabsList>
@@ -245,11 +276,31 @@ async function onOrderRedispatch(order: Order) {
           </Tabs>
         </div>
 
-        <!-- 日志区：锚点目标 -->
-        <div id="sec-logs" class="flex min-h-[200px] flex-col">
-          <LogPanel :logs="store.logs" class="min-h-[200px] flex-1" />
+        <!-- 日志视图 -->
+        <div v-show="view === 'logs'" id="sec-logs" class="flex min-h-[300px] flex-col">
+          <LogPanel :logs="store.logs" class="min-h-[300px] flex-1" />
+        </div>
+
+        <!-- 设置视图：先占位，后续承载 PM 面板 -->
+        <div v-show="view === 'settings'" class="flex flex-col gap-4">
+          <Card>
+            <CardHeader>
+              <CardTitle class="text-sm">设置</CardTitle>
+            </CardHeader>
+            <CardContent class="flex flex-col gap-2">
+              <Button variant="outline" size="sm" class="w-fit" @click="rolesOpen = true">
+                <UserCog class="h-4 w-4" />角色库
+              </Button>
+              <Button variant="outline" size="sm" class="w-fit" @click="installOpen = true">
+                <FileText class="h-4 w-4" />安装说明
+              </Button>
+              <p class="mt-2 text-xs text-muted-foreground">PM 接管配置将在下一版接入。</p>
+            </CardContent>
+          </Card>
         </div>
       </main>
+
+      <FloatingTabs v-model="view" :tabs="tabs" />
     <RolesDialog v-model:open="rolesOpen" :roles="store.roles" @save="onRolesSave" />
     <CreateOrderDialog
       v-model:open="sidebarCreateOpen"

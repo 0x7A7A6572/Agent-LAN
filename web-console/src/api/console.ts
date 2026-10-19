@@ -1,4 +1,4 @@
-import type { FileInfo, Order, OrderAttachment, OrderDetail, Presence } from '@/types/console'
+import type { FileInfo, Order, OrderAttachment, OrderDetail, PmState, Presence } from '@/types/console'
 import { rpc } from './rpc'
 
 async function getJson<T>(url: string): Promise<T> {
@@ -28,6 +28,9 @@ export const setNodeRole = (name: string, role: string) =>
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ name, role }),
   }).then(r => r.json() as Promise<{ ok: boolean; role?: string; error?: string }>)
+
+export const fetchPmState = () =>
+  getJson<PmState>('/console/pm/state').catch(() => ({ mode: 'human', enabled: false } as PmState))
 
 export const fetchFiles = () =>
   getJson<{ files: FileInfo[] }>('/console/files').catch(() => ({ files: [] as FileInfo[] }))
