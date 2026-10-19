@@ -40,8 +40,14 @@ export const savePmConfig = (patch: Partial<PmConfigView> & { apiKey?: string })
   }).then(r => r.json() as Promise<{ ok: boolean; error?: string; config?: PmConfigView }>)
 
 export const fetchPmWorkbuddy = () =>
-  getJson<{ available: boolean; reason?: string; running: boolean; models: string[] }>('/console/pm/workbuddy').catch(
-    () => ({ available: false, reason: '探测失败', running: false, models: [] as string[] }),
+  getJson<{ available: boolean; reason?: string; ready: boolean; models: string[] }>('/console/pm/workbuddy').catch(
+    () => ({ available: false, reason: '探测失败', ready: false, models: [] as string[] }),
+  )
+
+/** 初始化 WorkBuddy 直连并拿模型列表（首次会解凭据，几秒） */
+export const readyPmWorkbuddy = () =>
+  fetch('/console/pm/workbuddy/ready', { method: 'POST' }).then(r =>
+    r.json() as Promise<{ ok: boolean; models?: string[]; error?: string }>,
   )
 
 export const probePmModel = () =>

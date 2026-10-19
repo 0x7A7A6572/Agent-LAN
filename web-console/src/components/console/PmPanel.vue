@@ -5,12 +5,14 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Label } from '@/components/ui/label'
 import {
   fetchPmConfig,
   fetchPmDecisions,
   fetchPmWorkbuddy,
   probePmModel,
+  readyPmWorkbuddy,
   savePmConfig,
   setPmMode,
 } from '@/api/console'
@@ -36,11 +38,13 @@ const loaded = ref(false)
 const decisions = ref<PmDecisionView[]>([])
 const apiKey = ref('')
 // WorkBuddy 直连的可用性探测结果
-const wb = ref<{ available: boolean; reason?: string; running: boolean; models: string[] }>({
+const wb = ref<{ available: boolean; reason?: string; ready: boolean; models: string[] }>({
   available: false,
-  running: false,
+  ready: false,
   models: [],
 })
+const wbLoading = ref(false)
+const wbError = ref('')
 const busy = ref(false)
 const msg = ref('')
 /** 提示消息的严重程度：失败要显眼，别被当成切换成功 */
@@ -77,6 +81,26 @@ async function toggle() {
 }
 
 // 单独测试模型连通性，不用先接管
+/** 切到直连：首次需要解凭据拉模型表，成功后填充下拉 */
+async function useWorkbuddy() {
+  config.value.provider = 'workbuddy'
+  if (wb.value.models.length || wbLoading.value) return
+  wbLoading.value = true
+  wbError.value = ''
+  try {
+    const r = await readyPmWorkbuddy()
+    if (r.ok && r.models?.length) {
+      wb.value = { ...wb.value, ready: true, models: r.models }
+      // 当前模型不在列表里就选第一个，避免留着一个不存在的模型名
+      if (!r.models.includes(config.value.model)) config.value.model = r.models[0] ?? ''
+    } else {
+      wbError.value = r.error || '无法读取模型列表'
+    }
+  } finally {
+    wbLoading.value = false
+  }
+}
+
 async function probe() {
   busy.value = true
   try {
@@ -182,7 +206,7 @@ defineExpose({ reload: load })
             :variant="config.provider === 'workbuddy' ? 'default' : 'outline'"
             :disabled="!wb.available"
             :title="wb.available ? '直连本机 WorkBuddy' : wb.reason"
-            @click="config.provider = 'workbuddy'"
+            @click="useWorkbuddy()"
           >
             <Zap class="h-3.5 w-3.5" />
             直连 WorkBuddy
@@ -192,13 +216,21 @@ defineExpose({ reload: load })
 
         <template v-if="config.provider === 'workbuddy'">
           <div class="grid gap-1.5">
-            <Label class="text-xs">模型名</Label>
-            <Input v-model="config.model" class="h-8 text-xs" placeholder="deepseek-v4.1-flash" />
-            <p v-if="wb.models.length" class="text-[11px] text-muted-foreground">
-              可用：{{ wb.models.slice(0, 8).join(' / ') }}{{ wb.models.length > 8 ? ' 等' : '' }}
-            </p>
-            <p v-else class="text-[11px] text-muted-foreground">
-              首次接管时启动本地 shim 后才会列出模型，可先填 deepseek-v4.1-flash。
+            <Label class="text-xs">模型</Label>
+            <Select v-model="config.model">
+              <SelectTrigger class="h-8 w-full text-xs">
+                <SelectValue :placeholder="wbLoading ? '正在读取模型列表…' : '选择模型…'" />
+              </SelectTrigger>
+              <SelectContent class="max-h-72">
+                <SelectItem v-for="m in wb.models" :key="m" :value="m" class="text-xs">
+                  {{ m }}
+                </SelectItem>
+              </SelectContent>
+            </Select>
+            <p v-if="wbLoading" class="text-[11px] text-muted-foreground">正在解凭据并读取模型列表…</p>
+            <p v-else-if="wbError" class="text-[11px] text-destructive">{{ wbError }}</p>
+            <p v-else-if="wb.models.length" class="text-[11px] text-muted-foreground">
+              共 {{ wb.models.length }} 个可用模型，来自本机 WorkBuddy 账号
             </p>
           </div>
         </template>

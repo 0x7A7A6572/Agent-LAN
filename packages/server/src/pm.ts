@@ -267,8 +267,23 @@ export async function callPm(
   cfg: PmConfig,
   system: string,
   user: string,
-  sse = false
+  /** 自定义调用器：workbuddy 直连走它，绕开 HTTP 端点形态 */
+  custom?: (body: unknown, timeoutMs: number) => Promise<{ text: string } | { error: string }>
 ): Promise<{ text: string } | { error: string }> {
+  if (custom) {
+    try {
+      return await custom({
+        model: cfg.model,
+        temperature: cfg.temperature,
+        messages: [
+          { role: "system", content: system },
+          { role: "user", content: user },
+        ],
+      }, cfg.timeoutMs);
+    } catch (err: any) {
+      return { error: "调用失败: " + String(err?.message ?? err) };
+    }
+  }
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), cfg.timeoutMs);
   try {
@@ -290,13 +305,6 @@ export async function callPm(
     if (!res.ok) {
       const detail = (await res.text().catch(() => "")).slice(0, 300);
       return { error: "HTTP " + res.status + ": " + detail };
-    }
-    if (sse) {
-      const { readSseCompletion } = await import("./workbuddy-provider.js");
-      const text = await readSseCompletion(res, cfg.timeoutMs);
-      if (typeof text !== "string") return text;
-      if (!text.trim()) return { error: "响应里没有 content" };
-      return { text };
     }
     const data = await res.json() as any;
     const text = data?.choices?.[0]?.message?.content;

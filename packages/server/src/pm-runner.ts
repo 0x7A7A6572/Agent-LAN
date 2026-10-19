@@ -20,6 +20,8 @@ export interface PmRunnerDeps {
   sendMessage: (to: string, text: string) => void;
   dispatch: (orderId: string, assignee: string, by: string) => void;
   log: (line: string) => void;
+  /** 自定义模型调用器：workbuddy 直连时注入，绕开 HTTP 端点 */
+  customCall?: (body: unknown, timeoutMs: number) => Promise<{ text: string } | { error: string }>;
 }
 
 const PM_NAME = "hub-pm";
@@ -55,8 +57,7 @@ export async function runDecision(
     cfg.tokenBudget
   );
 
-  // WorkBuddy shim 只回流式响应，需要按 SSE 拼包
-  const call = await callPm(cfg, system, user, cfg.provider === "workbuddy");
+  const call = await callPm(cfg, system, user, deps.customCall);
   if ("error" in call) {
     return {
       at: started,
