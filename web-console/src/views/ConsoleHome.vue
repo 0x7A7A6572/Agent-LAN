@@ -7,6 +7,7 @@ import CreateOrderDialog from '@/components/console/CreateOrderDialog.vue'
 import NodeCard from '@/components/console/NodeCard.vue'
 import NodeTopology from '@/components/console/NodeTopology.vue'
 import PmPanel from '@/components/console/PmPanel.vue'
+import RedispatchDialog from '@/components/console/RedispatchDialog.vue'
 import FloatingTabs from '@/components/console/FloatingTabs.vue'
 import type { FloatingTab } from '@/components/console/floating-tabs'
 import OrderPanel from '@/components/console/OrderPanel.vue'
@@ -143,10 +144,17 @@ async function onOrderCancel(order: Order) {
   else log('[order] 取消失败: ' + (r.error || '未知错误'))
 }
 
-async function onOrderRedispatch(order: Order) {
-  const r = await store.redispatchOrder(order.id)
-  if (r.ok) log('[order] 已重新派发 ' + order.id + ' -> ' + (order.assignee || '当前处理人'))
+async function onOrderRedispatch(order: Order, assignee?: string) {
+  const r = await store.redispatchOrder(order.id, assignee)
+  if (r.ok) log('[order] 已重新派发 ' + order.id + ' -> ' + (assignee || order.assignee || '当前处理人'))
   else log('[order] 派发失败: ' + (r.error || '未知错误'))
+}
+
+// 重新派发：先选人再确认，避免只能沿用原处理人
+const redispatchOpen = ref(false)
+const redispatchDialog = ref<InstanceType<typeof RedispatchDialog> | null>(null)
+function openRedispatch(order: Order) {
+  redispatchDialog.value?.show(order)
 }
 
 
@@ -275,11 +283,11 @@ async function onOrderRedispatch(order: Order) {
                     ref="orderPanel"
                     :orders="tabOrders"
                     :all-orders="store.orders"
-                    :node-names="store.nodeNames"
+                    :presences="store.presences"
                     @create="onOrderCreate"
                     @status-change="onStatusChange"
                     @cancel="onOrderCancel"
-                    @redispatch="onOrderRedispatch"
+                    @redispatch="openRedispatch"
                     @edit="onOrderEdit"
                   />
                 </CardContent>
@@ -318,9 +326,10 @@ async function onOrderRedispatch(order: Order) {
     <RolesDialog v-model:open="rolesOpen" :roles="store.roles" @save="onRolesSave" />
     <CreateOrderDialog
       v-model:open="sidebarCreateOpen"
-      :node-names="store.nodeNames"
+      :presences="store.presences"
       @create="onOrderCreate"
     />
+    <RedispatchDialog ref="redispatchDialog" v-model:open="redispatchOpen" :presences="store.presences" @confirm="onOrderRedispatch" />
     <FilesDialog v-model:open="filesOpen" />
     <InstallDialog v-model:open="installOpen" />
     <RolePickDialog v-model:open="pickOpen" :roles="store.roles" :node-name="pickName" :current="pickCurrent" @pick="onPickConfirm" />

@@ -14,13 +14,13 @@ import CreateOrderDialog from './CreateOrderDialog.vue'
 import EditOrderDialog from './EditOrderDialog.vue'
 import OrderTree from './OrderTree.vue'
 import { useConsoleStore } from '@/stores/console'
-import type { Order, OrderDetail, OrderPriority, OrderStatus } from '@/types/console'
+import type { Order, OrderDetail, OrderPriority, OrderStatus, Presence } from '@/types/console'
 
 const props = defineProps<{
   orders: Order[]
   /** 全量工单：判断有无子单必须用它。用 orders(Tab 过滤后) 会让异状态子单的展开箭头消失 */
   allOrders: Order[]
-  nodeNames: string[]
+  presences: Presence[]
 }>()
 const emit = defineEmits<{
   (e: 'create', body: { title: string; assignee?: string; priority: OrderPriority; parent?: string; description?: string }): void
@@ -157,11 +157,11 @@ defineExpose({ showDetail })
 
     <CreateOrderDialog
       v-model:open="createOpen"
-      :node-names="nodeNames"
+      :presences="presences"
       :parent="childParent"
       @create="b => (emit('create', b), (childParent = null))"
     />
 
-    <EditOrderDialog ref="editDialog" v-model:open="editOpen" :node-names="nodeNames" @save="(o, p) => emit('edit', o, p)" />
+    <EditOrderDialog ref="editDialog" v-model:open="editOpen" :presences="presences" @save="(o, p) => emit('edit', o, p)" />
   </div>
 </template>

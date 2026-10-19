@@ -12,11 +12,12 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Select, SelectContent, SelectTrigger, SelectValue } from '@/components/ui/select'
+import NodeSelectItem from './NodeSelectItem.vue'
 import { Textarea } from '@/components/ui/textarea'
-import type { OrderAttachment, OrderPriority } from '@/types/console'
+import type { OrderAttachment, OrderPriority, Presence } from '@/types/console'
 
-const props = defineProps<{ nodeNames: string[]; parent?: { id: string; title: string } | null }>()
+const props = defineProps<{ presences: Presence[]; parent?: { id: string; title: string } | null }>()
 const emit = defineEmits<{
   (e: 'create', body: { title: string; assignee?: string; priority: OrderPriority; parent?: string; description?: string; attachments?: OrderAttachment[] }): void
 }>()
@@ -138,8 +139,8 @@ async function submit() {
             <Label>指派给</Label>
             <Select v-model="assignee">
               <SelectTrigger class="w-full"><SelectValue placeholder="选择节点…" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem v-for="n in nodeNames" :key="n" :value="n">{{ n }}</SelectItem>
+              <SelectContent class="min-w-[260px]">
+                <NodeSelectItem v-for="p in presences" :key="p.card.name" :presence="p" />
               </SelectContent>
             </Select>
           </div>

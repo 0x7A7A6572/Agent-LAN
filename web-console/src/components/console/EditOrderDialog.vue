@@ -12,11 +12,12 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Select, SelectContent, SelectTrigger, SelectValue } from '@/components/ui/select'
+import NodeSelectItem from './NodeSelectItem.vue'
 import { Textarea } from '@/components/ui/textarea'
-import type { Order, OrderAttachment, OrderPriority, OrderStatus } from '@/types/console'
+import type { Order, OrderAttachment, OrderPriority, OrderStatus, Presence } from '@/types/console'
 
-const props = defineProps<{ nodeNames: string[] }>()
+const props = defineProps<{ presences: Presence[] }>()
 const emit = defineEmits<{
   (e: 'save', order: Order, patch: Partial<Order>, attachments?: { add: OrderAttachment[]; remove: string[] }): void
 }>()
@@ -122,8 +123,8 @@ defineExpose({ show: (o: Order) => { current.value = o; open.value = true } })
             <Label>指派给</Label>
             <Select v-model="assignee">
               <SelectTrigger class="w-full"><SelectValue placeholder="未指派" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem v-for="n in nodeNames" :key="n" :value="n">{{ n }}</SelectItem>
+              <SelectContent class="min-w-[260px]">
+                <NodeSelectItem v-for="p in presences" :key="p.card.name" :presence="p" />
               </SelectContent>
             </Select>
           </div>
