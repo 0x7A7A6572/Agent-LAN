@@ -148,7 +148,9 @@ export class Registry {
     p.state = on ? "working" : "idle";
     p.workingOn = on ? (workingOn ?? p.workingOn) : undefined;
     p.waitingFor = on ? p.waitingFor : undefined;
-    p.busyKind = on ? (kind ?? p.busyKind ?? "task") : undefined;
+    // kind 不继承旧值：否则「刚处理完留言（message）」之后收到任务开工上报，
+    // 会沿用 message 语义，被节点下一次领活当成「留言已消化」清掉执行态。
+    p.busyKind = on ? (kind ?? "task") : undefined;
     p.busyUntil = on && ttlMs ? Date.now() + ttlMs : undefined;
     if (on) p.busySince = Date.now();
     p.lastSeen = new Date().toISOString();
