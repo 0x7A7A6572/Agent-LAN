@@ -9,6 +9,8 @@ const props = defineProps<{
   dispatchMode?: string
   /** PM 节点名；pm 模式下只有它是调度中枢 */
   pmName?: string
+  /** 是否在展示演示节点 */
+  demo?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -156,8 +158,8 @@ const links = computed(() =>
         />
       </g>
 
-      <!-- 中心：Supervisor / 人工调度 -->
-      <g v-if="pmNode || mode !== 'human'">
+      <!-- 中心：Supervisor / 人工调度，任何模式都显示，这是拓扑的主角 -->
+      <g>
         <circle v-if="pmActive" :cx="CENTER.x" :cy="CENTER.y" :r="Math.round(LEAF_R * 0.62)" fill="url(#pmGlow)" />
         <circle
           :cx="CENTER.x"
@@ -216,6 +218,14 @@ const links = computed(() =>
         暂无节点接入
       </text>
     </svg>
+
+    <!-- 演示数据提示：真实节点为零时的占位，接上任何节点即消失 -->
+    <div
+      v-if="demo"
+      class="absolute right-3 top-2.5 rounded-full border border-dashed border-muted-foreground/40 bg-background/70 px-2.5 py-1 text-[11px] text-muted-foreground backdrop-blur"
+    >
+      演示节点 · 接入真实节点后自动消失
+    </div>
 
     <!-- 图例 -->
     <div class="absolute bottom-2 left-3 flex flex-wrap items-center gap-3 text-[11px] text-muted-foreground">

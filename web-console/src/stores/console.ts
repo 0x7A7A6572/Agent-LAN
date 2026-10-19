@@ -5,8 +5,24 @@ import type { Order, OrderAttachment, OrderStatus, PmState, Presence } from '@/t
 
 export const useConsoleStore = defineStore('console', () => {
   // 名册：SSE 全量推送，直接整表替换
-  const presences = ref<Presence[]>([])
+  const rawPresences = ref<Presence[]>([])
   const sseStatus = ref<'connecting' | 'live' | 'error'>('connecting')
+
+  // 演示节点：仅在完全没有真实节点时使用，让拓扑视图能看清结构；接上真实节点即自动消失
+  const DEMO_PRESENCES: Presence[] = [
+    { card: { name: 'demo-fe', url: 'inbound', version: '0.0.1' }, online: true, state: 'idle', role: 'frontend', groupHost: '10.0.0.21', lastSeen: 0, agent: 'dsh' },
+    { card: { name: 'demo-be', url: 'inbound', version: '0.0.1' }, online: true, state: 'working', role: 'backend', workingOn: '订单接口', groupHost: '10.0.0.22', lastSeen: 0, agent: 'dsh' },
+    { card: { name: 'demo-qa', url: 'inbound', version: '0.0.1' }, online: true, state: 'idle', role: 'test', groupHost: '10.0.0.22', lastSeen: 0, agent: 'workbuddy' },
+    { card: { name: 'demo-ops', url: 'inbound', version: '0.0.1' }, online: false, role: 'devops', groupHost: '10.0.0.30', lastSeen: 0, agent: 'dsh' },
+    { card: { name: 'demo-docs', url: 'inbound', version: '0.0.1' }, online: true, state: 'idle', role: 'docs', groupHost: '10.0.0.30', lastSeen: 0, agent: 'workbuddy' },
+    { card: { name: 'demo-pm', url: 'inbound', version: '0.0.1' }, online: false, role: 'requirement', groupHost: '10.0.0.40', lastSeen: 0, agent: 'dsh' },
+  ]
+
+  /** 对外名册：真实节点优先；一个都没有时用演示数据填充视图 */
+  const presences = computed<Presence[]>(() =>
+    rawPresences.value.length ? rawPresences.value : DEMO_PRESENCES
+  )
+  const demoMode = computed(() => rawPresences.value.length === 0)
 
   // 等待人工确认：名册里任一节点带 waitingFor 即弹提示（已提醒过的节点不重复弹）
   const waitingNodes = computed(() => presences.value.filter(p => p.waitingFor))
@@ -55,10 +71,10 @@ export const useConsoleStore = defineStore('console', () => {
     }
     es.onmessage = e => {
       try {
-        presences.value = JSON.parse(e.data).presences ?? []
+        rawPresences.value = JSON.parse(e.data).presences ?? []
         sseStatus.value = 'live'
         // 只对「新进入等待」的节点弹一次，签名不变不重复打扰
-        const pending = presences.value.filter(p => p.waitingFor)
+        const pending = rawPresences.value.filter(p => p.waitingFor)
         const sig = pending.map(p => p.card.name + '|' + p.waitingFor).sort().join(';')
         if (sig !== waitingSig.value) {
           waitingSig.value = sig
@@ -157,6 +173,7 @@ export const useConsoleStore = defineStore('console', () => {
 
   return {
     presences,
+    demoMode,
     sseStatus,
     waitingNodes,
     waitingAlert,

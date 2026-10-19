@@ -208,13 +208,13 @@ async function onOrderRedispatch(order: Order) {
           </Button>
         </div>
 
-        <!-- 节点视图：详情 1 份 / 拓扑 4 份横向分栏，拓扑吃满剩余宽度不空 -->
+        <!-- 节点视图：详情 1 / 拓扑 4，两栏同高，超出各自滚动 -->
         <div
           v-show="view === 'nodes'"
-          class="flex min-h-0 flex-1 flex-col gap-4 lg:flex-row"
+          class="flex flex-col gap-4 lg:h-[calc(100vh-12rem)] lg:flex-row"
         >
           <!-- 详情列：窄栏纵向滚动，承载留言/删节点等操作 -->
-          <aside class="flex shrink-0 flex-col gap-3 lg:w-1/5 lg:min-w-[240px]">
+          <aside class="flex min-h-[280px] shrink-0 flex-col gap-3 lg:w-1/5 lg:min-w-[240px]">
             <div class="flex items-center gap-2">
               <span class="text-xs font-medium text-muted-foreground">节点详情</span>
               <Badge variant="outline" class="text-[10px]">{{ store.presences.length }}</Badge>
@@ -236,11 +236,12 @@ async function onOrderRedispatch(order: Order) {
           </aside>
 
           <!-- 拓扑：Supervisor 在中心，派发链路随接管状态高亮 -->
-          <div class="flex min-h-[360px] min-w-0 flex-1 flex-col lg:h-0">
+          <div class="flex min-h-[360px] min-w-0 flex-1 flex-col">
             <NodeTopology
               :presences="store.presences"
               :dispatch-mode="store.pmState.mode"
               :pm-name="store.pmState.pmName"
+              :demo="store.demoMode"
               @pick-role="onPickRole"
             />
           </div>
