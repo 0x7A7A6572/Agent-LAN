@@ -9,14 +9,11 @@ const props = defineProps<{
   dispatchMode?: string
   /** PM 节点名；pm 模式下只有它是调度中枢 */
   pmName?: string
-  /** 是否在展示演示节点 */
-  demo?: boolean
 }>()
 
 const emit = defineEmits<{
   (e: 'pick-role', name: string, role: string): void
   (e: 'mail', name: string): void
-  (e: 'toggle-demo'): void
 }>()
 
 // 视图尺寸跟随容器实测比例：分栏后拓扑变宽，固定 900x520 会让环形显得空
@@ -205,7 +202,6 @@ const links = computed(() =>
           :class="[
             'transition-all',
             n.p.waitingFor ? 'fill-amber-500/15 stroke-amber-500' : n.p.state === 'working' && n.p.online ? 'fill-blue-500/15 stroke-blue-500' : n.p.online ? 'fill-card stroke-border' : 'fill-muted/40 stroke-muted-foreground/30',
-            n.p.demo ? 'stroke-dasharray-2 opacity-70' : '',
           ]"
           stroke-width="1.5"
         />
@@ -231,21 +227,17 @@ const links = computed(() =>
         </text>
       </g>
 
-      <text v-if="!presences.length" :x="CENTER.x" :y="CENTER.y" text-anchor="middle" class="fill-muted-foreground text-sm">
-        暂无节点接入
+      <!-- 空状态：中心已占位，提示文字下移到环下方，避免和 Supervisor 文字重叠 -->
+      <text
+        v-if="!presences.length"
+        :x="CENTER.x"
+        :y="CENTER.y + NODE_R + 40"
+        text-anchor="middle"
+        class="fill-muted-foreground text-[11px]"
+      >
+        暂无节点接入 · 运行 probe.sh --install 后启动 worker.sh
       </text>
     </svg>
-
-    <!-- 演示数据提示：这些是本地占位，不参与真实派发 -->
-    <div
-      v-if="demo"
-      class="absolute right-3 top-2.5 flex items-center gap-1.5 rounded-full border border-dashed border-muted-foreground/40 bg-background/80 px-2.5 py-1 text-[11px] text-muted-foreground backdrop-blur"
-    >
-      <span>含演示节点（不可指派）</span>
-      <button class="underline-offset-2 hover:text-foreground hover:underline" @click="emit('toggle-demo')">
-        隐藏
-      </button>
-    </div>
 
     <!-- 图例 -->
     <div class="absolute bottom-2 left-3 flex flex-wrap items-center gap-3 text-[11px] text-muted-foreground">

@@ -220,9 +220,7 @@ function openRedispatch(order: Order) {
               :presences="store.presences"
               :dispatch-mode="store.pmState.mode"
               :pm-name="store.pmState.pmName"
-              :demo="store.demoMode"
               @pick-role="onPickRole"
-              @toggle-demo="store.toggleDemo()"
             />
           </div>
         </div>

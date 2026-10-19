@@ -10,10 +10,8 @@ const props = defineProps<{
   onlineOnly?: boolean
 }>()
 
-// 演示节点是本地占位，派给它服务端会报「目标不在线或未知」，选它就等于选了个坑
-const disabled = computed(
-  () => props.presence.demo === true || (props.onlineOnly === true && !props.presence.online),
-)
+// onlineOnly 时禁选离线节点，避免派出后无人领取
+const disabled = computed(() => props.onlineOnly === true && !props.presence.online)
 </script>
 
 <template>

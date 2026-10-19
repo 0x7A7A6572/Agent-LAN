@@ -23,8 +23,6 @@ export interface Presence {
   mcpActive?: boolean
   agent?: string
   queuedCount?: number
-  /** 演示节点：前端本地占位，不来自服务端；真实节点接入后整体替换 */
-  demo?: boolean
 }
 
 /** 派发权状态：human 人工模式 / pm PM 接管 / degraded PM 超时已放行 */
