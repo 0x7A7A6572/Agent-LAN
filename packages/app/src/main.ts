@@ -9,8 +9,8 @@ import { fileURLToPath } from "node:url";
 import type { AgentAdapter, AgentCard, AgentPresence } from "@mac/sdk";
 
 const port = Number(process.env.MAC_PORT ?? 9600);
-const agentName = process.env.MAC_AGENT_NAME ?? "node-1";
-const adapterKind = process.env.MAC_ADAPTER ?? "claude";
+const agentName = process.env.MAC_AGENT_NAME ?? "node-server";
+const adapterKind = process.env.MAC_ADAPTER ?? "unknown";
 
 const adapters: Record<string, () => AgentAdapter> = {
   claude: () => createClaudeAdapter(process.cwd()),

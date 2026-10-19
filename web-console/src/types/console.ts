@@ -16,6 +16,8 @@ export interface Presence {
   state?: NodeState
   role?: string
   workingOn?: string
+  /** 正在等谁确认什么；有值即需人工介入 */
+  waitingFor?: string
   groupHost?: string
   lastSeen: number
   mcpActive?: boolean
@@ -27,6 +29,7 @@ export type OrderStatus =
   | 'backlog'
   | 'analyzing'
   | 'developing'
+  | 'blocked'
   | 'testing'
   | 'review'
   | 'done'
@@ -44,7 +47,16 @@ export interface OrderTimelineEvent {
 
 export interface OrderAttachment {
   name: string
-  [k: string]: unknown
+  uri?: string
+  by?: string
+  at?: string
+}
+
+export interface FileInfo {
+  name: string
+  size: number
+  mtime: string
+  uri: string
 }
 
 export interface Order {

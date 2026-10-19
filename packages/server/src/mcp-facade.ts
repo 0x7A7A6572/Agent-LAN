@@ -10,8 +10,12 @@ export interface McpFacadeDeps {
   checkIn: (card: AgentCard, sourceIp?: string) => { ok: boolean; conflictHost?: string; intervalMs: number; workerVersion?: string; guideUrl?: string };
   /** 领任务，超时返回 null */
   pullTask: (name: string, timeoutMs: number) => Promise<unknown>;
+  /** 任务投递未能送达（响应写出前连接已断）：回收该任务免得卡死 */
+  onDeliveryFailed: (taskId: string, name: string) => void;
+  /** 任务投递确认送达：清除 in-flight 标记 */
+  onDelivered: (taskId: string) => void;
   /** 上报结果；by 为上报节点名，驱动执行中状态 */
-  report: (taskId: string, state: string, text?: string, artifacts?: { name: string; uri: string }[], by?: string) => boolean;
+  report: (taskId: string, state: string, text?: string, artifacts?: { name: string; uri: string }[], by?: string) => { ok: boolean; reason?: string };
   /** 派任务给指定节点 */
   sendTask: (prompt: string, target?: string) => Promise<{ taskId: string; state: string }>;
   /** 查任务 */
@@ -36,6 +40,10 @@ export interface McpFacadeDeps {
   orderList: (filter: Parameters<OrderStore["list"]>[0]) => Order[];
   /** 给工单挂产物文件 */
   orderAttach: (id: string, name: string, contentBase64: string, by: string) => FileRef;
+  /** 取消工单：终止任务并回收待领 */
+  orderCancel: (id: string, by: string) => { ok: boolean; canceled: string[]; error?: string };
+  /** 重新派发工单：可换 assignee */
+  orderRedispatch: (id: string, assignee: string | undefined, by: string) => { ok: boolean; taskId?: string; error?: string };
   /** 节点规范全文（agent-onboarding 同源） */
   getGuide: () => string;
   log: (line: string, level?: "info" | "debug") => void;
@@ -50,7 +58,7 @@ const TOOLS = [
       properties: {
         name: { type: "string", description: "节点唯一名，如 wb-machineA" },
         agent: { type: "string", description: "agent 程序类型（与安装目录名一致，如 dsh/workbuddy）；同机同类型共用" },
-        description: { type: "string", description: "一句话说明本节点能做什么" },
+        description: { type: "string", description: "15字以内说明本节点能做什么" },
         host: { type: "string", description: "所在主机标识（机器名或 IP），同机的多个 agent 填同一个" },
         abilities: { type: "array", items: { type: "string" }, description: "能力标签列表" }
       },
@@ -71,7 +79,7 @@ const TOOLS = [
   },
   {
     name: "mac_report",
-    description: "上报任务执行结果。必须带 name（不带则完成状态不写回工单、控制台不刷新）。工单任务开工时先报 state=working，完成报 completed，失败报 failed——不报等于白干",
+    description: "上报任务执行结果。必须带 name（不带则完成状态不写回工单、控制台不刷新）。工单任务开工时先报 state=working，完成报 completed，失败报 failed——不报等于白干。需要人工确认用 state=input-required（没有单独的 request_input 工具）：控制台会置顶提醒；任务已终态时该请求返回 ok:false 与 reason",
     inputSchema: {
       type: "object",
       properties: {
@@ -170,7 +178,8 @@ const TOOLS = [
         startDate: { type: "string" },
         dueDate: { type: "string" },
         parent: { type: "string", description: "母单 id" },
-        blockedBy: { type: "array", items: { type: "string" }, description: "依赖的工单 id 列表" }
+        blockedBy: { type: "array", items: { type: "string" }, description: "依赖的工单 id 列表" },
+        by: { type: "string", description: "你的节点名，timeline 归因；不带则记成 mcp 无法追溯" }
       },
       required: ["title"]
     }
@@ -186,11 +195,12 @@ const TOOLS = [
   },
   {
     name: "mac_order_update",
-    description: "改工单：状态推进、改处理人、改依赖等。每次变更记入 timeline。离开 backlog 时依赖必须全 done。改 assignee 后必须紧跟 mac_send_task 通知目标节点，否则对方永远收不到活",
+    description: "改工单：状态推进、改处理人、改标题、改依赖等。每次变更记入 timeline。离开 backlog 时依赖必须全 done。改 assignee 后必须紧跟 mac_send_task 通知目标节点，否则对方永远收不到活",
     inputSchema: {
       type: "object",
       properties: {
         id: { type: "string" },
+        title: { type: "string", description: "改标题" },
         status: { type: "string" },
         priority: { type: "string", enum: ["urgent", "high", "normal", "low"] },
         tags: { type: "array", items: { type: "string" } },
@@ -199,9 +209,36 @@ const TOOLS = [
         startDate: { type: "string" },
         dueDate: { type: "string" },
         description: { type: "string" },
+        parent: { type: "string", description: "改挂到另一张母单" },
         blockedBy: { type: "array", items: { type: "string" } },
         force: { type: "boolean", description: "绕过依赖等待，环检测仍生效" },
-        note: { type: "string", description: "变更说明，写入流转记录" }
+        note: { type: "string", description: "变更说明，写入流转记录" },
+        by: { type: "string", description: "你的节点名，timeline 归因；不带则记成 mcp 无法追溯" }
+      },
+      required: ["id"]
+    }
+  },
+  {
+    name: "mac_order_cancel",
+    description: "取消工单：终止其全部活跃/待领任务，工单状态流转 canceled。取消后可用 mac_order_dispatch 重新派发",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string" },
+        by: { type: "string", description: "你的节点名，timeline 归因" }
+      },
+      required: ["id"]
+    }
+  },
+  {
+    name: "mac_order_dispatch",
+    description: "重新派发工单给 assignee（可传新 assignee 换人）：重建任务入队，节点开工即报 working。适用于取消后重做、打回重做、节点失联后转派",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string" },
+        assignee: { type: "string", description: "缺省用工单当前 assignee" },
+        by: { type: "string", description: "你的节点名，timeline 归因" }
       },
       required: ["id"]
     }
@@ -330,7 +367,8 @@ export async function mcpHandle(raw: string, req: http.IncomingMessage, res: htt
             if (r.conflictHost) {
               deps.log("[!] 节点名冲突: " + card.name + " 已注册于主机 " + r.conflictHost);
               replyError(-32002, "节点名 " + card.name + " 已被主机 " + r.conflictHost +
-                " 的节点占用，请换一个 name 重新注册（同机多实例时 NAME 必须各不相同）");
+                " 的节点占用。若就是这台机器（host 口径不一致导致误判），请用与首次注册相同的 host 值重试；" +
+                "同机多实例时 NAME 必须各不相同");
               return;
             }
             deps.log("++ " + card.name + " checked in via MCP", "debug");
@@ -346,7 +384,15 @@ export async function mcpHandle(raw: string, req: http.IncomingMessage, res: htt
             }
             const waitMs = Math.min(Number(a.waitMs) || 20000, 25000);
             const r = await deps.pullTask(caller, waitMs) as { task: unknown; messages?: unknown[] };
+            const task = r?.task as { id?: string } | null | undefined;
+            // 写出前若连接已断，回复会静默丢失，节点永远收不到这个任务：
+            // 此时必须回收，否则任务卡在 working 且不在队列（此前要等 30 分钟超时）
+            if (task?.id && res.writableEnded === false && res.destroyed) {
+              deps.onDeliveryFailed(task.id, caller);
+              return;
+            }
             reply(toolResult({ task: r?.task ?? null, messages: r?.messages ?? [] }));
+            if (task?.id && res.writableEnded) deps.onDelivered(task.id);
             return;
           }
           case "mac_report": {
@@ -356,8 +402,8 @@ export async function mcpHandle(raw: string, req: http.IncomingMessage, res: htt
               name: f.name,
               uri: deps.uploadFile(f.name, f.contentBase64)
             }));
-            const ok = deps.report(String(a.taskId), String(a.state), a.text, files.length ? files : undefined, a.name ? String(a.name) : undefined);
-            reply(toolResult({ ok, files: files.map((f: { uri: string }) => f.uri) }));
+            const r = deps.report(String(a.taskId), String(a.state), a.text, files.length ? files : undefined, a.name ? String(a.name) : undefined);
+            reply(toolResult({ ok: r.ok, reason: r.reason, files: files.map((f: { uri: string }) => f.uri) }));
             return;
           }
           case "mac_send_task": {
@@ -418,12 +464,14 @@ export async function mcpHandle(raw: string, req: http.IncomingMessage, res: htt
           case "mac_order_update": {
             try {
               const o = deps.orderUpdate(String(a.id), {
+                title: a.title ? String(a.title) : undefined,
                 status: a.status ? String(a.status) : undefined,
                 priority: a.priority as any, tags: a.tags,
                 assignee: a.assignee ? String(a.assignee) : undefined,
                 owner: a.owner ? String(a.owner) : undefined,
                 startDate: a.startDate, dueDate: a.dueDate,
                 description: a.description ? String(a.description) : undefined,
+                parent: a.parent ? String(a.parent) : undefined,
                 blockedBy: Array.isArray(a.blockedBy) ? a.blockedBy.map(String) : undefined,
                 force: Boolean(a.force),
                 note: a.note ? String(a.note) : undefined
@@ -451,6 +499,18 @@ export async function mcpHandle(raw: string, req: http.IncomingMessage, res: htt
             } catch (err: any) {
               replyError(orderErrorCode(String(err?.message ?? err)), String(err?.message ?? err));
             }
+            return;
+          }
+          case "mac_order_cancel": {
+            const r = deps.orderCancel(String(a.id), String(a.by ?? "mcp"));
+            if (r.ok) reply(toolResult(r));
+            else replyError(-32002, r.error ?? "取消失败");
+            return;
+          }
+          case "mac_order_dispatch": {
+            const r = await deps.orderRedispatch(String(a.id), a.assignee ? String(a.assignee) : undefined, String(a.by ?? "mcp"));
+            if (r.ok) reply(toolResult(r));
+            else replyError(-32002, r.error ?? "派发失败");
             return;
           }
           default:

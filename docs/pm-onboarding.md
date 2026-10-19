@@ -10,6 +10,8 @@
 - mac_order_update：推进状态 / 改处理人 / 挂产物（每次变更自动记 timeline）
 - mac_order_list：你的看板（按 status / assignee / tag 过滤）
 - mac_order_attach：给工单挂产物文件
+- mac_order_cancel：取消工单（终止任务并回收待领，状态流转 canceled）
+- mac_order_dispatch：重新派发工单（可换 assignee；取消后重做、打回重做、转派都用它）
 - mac_send_task / mac_send_message：把活推进到节点手里（最后一公里）
 - mac_list_agents：看在线节点与能力标签
 

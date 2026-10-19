@@ -1,13 +1,27 @@
 // 局域网花名册：心跳注册与在线判定，供状态台查询
 // 名单持久化：节点一旦注册便保留，直到控制台手动删除
 import fs from "node:fs";
+import os from "node:os";
 import type { AgentCard, AgentPresence } from "@mac/sdk";
 
 const OFFLINE_AFTER_MS = 40000;
+// 本机身份表（主机名 + 各网卡地址）：来源 IP 与自报主机名天然不可比，靠它认定同机
+let LOCAL_KEYS: Set<string> | undefined;
+function localHostKeys(): Set<string> {
+  if (!LOCAL_KEYS) {
+    const keys = new Set<string>(["localhost", "::1", "127.0.0.1"]);
+    keys.add(os.hostname().toLowerCase());
+    for (const list of Object.values(os.networkInterfaces())) {
+      for (const ni of list ?? []) keys.add(ni.address.toLowerCase());
+    }
+    LOCAL_KEYS = keys;
+  }
+  return LOCAL_KEYS;
+}
 // busy 豁免离线判定的上限，防节点崩死挂成僵尸执行中
 const BUSY_MAX_MS = 7200000;
 // 持久化字段：运行态（state/busy/workingOn）不落盘，重启不残留僵尸执行中
-type Persisted = Pick<AgentPresence, "card" | "lastSeen" | "online" | "baseUrl" | "groupHost">;
+type Persisted = Pick<AgentPresence, "card" | "lastSeen" | "online" | "baseUrl" | "groupHost" | "sourceIp">;
 
 export class Registry {
   private agents = new Map<string, AgentPresence>();
@@ -34,7 +48,8 @@ export class Registry {
   private writeNow(): void {
     const arr = [...this.agents.values()].map(p => ({
       card: p.card, lastSeen: p.lastSeen, online: p.online,
-      baseUrl: p.baseUrl, groupHost: p.groupHost
+      baseUrl: p.baseUrl, groupHost: p.groupHost,
+      sourceIp: p.sourceIp
     }));
     try { fs.writeFileSync(this.filePath!, JSON.stringify(arr, null, 2)); }
     catch { /* 落盘失败下次变更重试 */ }
@@ -59,10 +74,23 @@ export class Registry {
   heartbeat(card: AgentCard, baseUrl?: string | null, sourceIp?: string): { reconnected: boolean; conflict?: string } {
     const existing = this.agents.get(card.name);
     // 分组键：卡片自报 host > inbound 的来源 IP > url
-    const groupHost = card.host ?? (card.url === "inbound" && sourceIp ? sourceIp : card.url);
-    // 异机撞名拒绝：同名但主机标识不同 = 两个程序抢同一身份，任务会互抢
+    let groupHost = card.host ?? (card.url === "inbound" && sourceIp ? sourceIp : card.url);
+    // 同名双口径归并：注册带 host（MCP 手传/worker hostname）与不带（走来源 IP）混用时，
+    // 以首次绑定为准；来源 IP 与已绑主机同段或同机即视为同一主机，不误判撞名
     if (existing && existing.groupHost !== groupHost) {
-      return { reconnected: false, conflict: existing.groupHost };
+      // 同一节点可能带 host（worker 自报主机名）与不带（退化成来源 IP）两种口径交替注册。
+      // 主机名与 IP 不可直接比较，若只做字符串比对，二者会互判异机、每轮心跳刷「撞名」。
+      // 判据：任一侧属于本机身份表即同一主机；归并后一律沿用首次绑定，避免口径来回翻转。
+      const local = localHostKeys();
+      const bound = String(existing.groupHost).toLowerCase();
+      const now = String(groupHost).toLowerCase();
+      // 来源 IP 是权威依据：同一来源即同一主机，与自报 host 是否带无关
+      const sameSource = !!sourceIp && !!existing.sourceIp && existing.sourceIp === sourceIp;
+      const sameMachine = bound === now || local.has(bound) || local.has(now) || sameSource;
+      if (!sameMachine) {
+        return { reconnected: false, conflict: existing.groupHost };
+      }
+      groupHost = existing.groupHost;
     }
     // 执行态由 setBusy/report 管理，心跳整卡覆盖不得抹掉，否则伴生心跳一打就变空闲
     this.agents.set(card.name, {
@@ -74,7 +102,9 @@ export class Registry {
       agent: (card as AgentCard & { agent?: string }).agent ?? existing?.agent,
       state: existing?.state,
       workingOn: existing?.workingOn,
-      busySince: existing?.busySince
+      waitingFor: existing?.waitingFor,
+      busySince: existing?.busySince,
+      sourceIp: sourceIp ?? existing?.sourceIp
     });
     if (!existing) this.save();
     return { reconnected: !existing?.online && !!existing };
@@ -102,7 +132,17 @@ export class Registry {
     if (!p) return false;
     p.state = on ? "working" : "idle";
     p.workingOn = on ? (workingOn ?? p.workingOn) : undefined;
+    p.waitingFor = on ? p.waitingFor : undefined;
     if (on) p.busySince = Date.now();
+    p.lastSeen = new Date().toISOString();
+    return true;
+  }
+
+  /** 等待人工确认：置 waitingFor，控制台据此提示；传空串清除 */
+  setWaiting(name: string, waitingFor?: string): boolean {
+    const p = this.agents.get(name);
+    if (!p) return false;
+    p.waitingFor = waitingFor && waitingFor.trim() ? waitingFor.trim() : undefined;
     p.lastSeen = new Date().toISOString();
     return true;
   }

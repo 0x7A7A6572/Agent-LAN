@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { Mail, Monitor, Pencil, TrendingUp } from 'lucide-vue-next'
+import { Mail, Monitor, Pencil, TrendingUp, TriangleAlert } from 'lucide-vue-next'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -27,6 +27,8 @@ const emit = defineEmits<{
 const store = useConsoleStore()
 const logo = computed(() => logoOf(props.presence.card.name, props.presence.agent))
 const working = computed(() => props.presence.online && props.presence.state === 'working')
+// 等待人工确认：优先于执行中显示，是需要人介入的信号
+const waiting = computed(() => props.presence.waitingFor || '')
 const time = computed(() => new Date(props.presence.lastSeen).toLocaleTimeString('zh-CN', { hour12: false }))
 // 设备分组：服务端算好的 groupHost（卡片 host > 来源 IP > url 兜底）
 const group = computed(() => props.presence.groupHost || props.presence.card.host || props.presence.card.url)
@@ -75,7 +77,7 @@ async function send() {
 <template>
   <Card
     class="flex flex-col gap-3 py-4 pb-1 transition-colors"
-    :class="working ? 'border-blue-600/60' : presence.online ? '' : 'opacity-55'"
+    :class="waiting ? 'border-amber-500/70' : working ? 'border-blue-600/60' : presence.online ? '' : 'opacity-55'"
     @contextmenu="onContextmenu"
   >
     <CardHeader class="px-4">
@@ -84,14 +86,15 @@ async function send() {
         <CardTitle class="text-sm font-medium">{{ presence.card.name }}</CardTitle>
         <Badge
           variant="outline"
-          class="ml-auto gap-1 line-clamp-1"
-          :class="working ? 'border-blue-500/60 text-blue-500' : ''"
-          :title="working ? '执行中' : presence.online ? (presence.mcpActive ? '在线' : '在线·仅心跳') : '离线'"
+          class="ml-auto gap-1.5 line-clamp-1"
+          :class="waiting ? 'border-amber-500/70 text-amber-600' : working ? 'border-blue-500/60 text-blue-500' : ''"
+          :title="waiting ? '等待人工确认：' + waiting : working ? '执行中' : presence.online ? (presence.mcpActive ? '在线' : '在线·仅心跳') : '离线'"
         >
           <span
             class="size-1.5 rounded-full"
-            :class="working ? 'animate-pulse bg-blue-500' : presence.online ? (presence.mcpActive ? 'bg-green-500' : 'bg-yellow-500') : 'bg-muted-foreground/40'"
+            :class="waiting ? 'animate-pulse bg-amber-500' : working ? 'animate-pulse bg-blue-500' : presence.online ? (presence.mcpActive ? 'bg-green-500' : 'bg-yellow-500') : 'bg-muted-foreground/40'"
           />
+          {{ waiting ? '等人工' : working ? '执行中' : presence.online ? (presence.mcpActive ? '在线' : '心跳') : '离线' }}
         </Badge>
       </div>
       <button
@@ -103,7 +106,11 @@ async function send() {
         {{ presence.role || '设定角色' }}
         <Pencil class="h-3.5 w-3.5 opacity-50" />
       </button>
-      <p class="flex items-center gap-1 text-sm text-muted-foreground">
+      <p v-if="waiting" class="flex items-start gap-1 text-sm font-medium text-amber-600">
+        <TriangleAlert class="mt-0.5 h-4 w-4 shrink-0" />
+        <span class="line-clamp-2">等待人工：{{ waiting }}</span>
+      </p>
+      <p class="flex items-center gap-1 line-clamp-1 text-sm text-muted-foreground">
         <TrendingUp v-if="working" class="h-4 w-4 text-blue-500" />
         {{ working ? '执行中 · ' + (presence.workingOn || '') : presence.online ? '空闲' : '离线' }}
         <span v-if="(presence.queuedCount ?? 0) > 0" class="rounded bg-yellow-500/15 px-1.5 text-xs text-yellow-600">

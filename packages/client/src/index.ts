@@ -72,13 +72,23 @@ export class AgentClient {
   }
 
   private async runTask(task: Task): Promise<void> {
+    // 取消监听：执行期间每 3s 查一次任务状态，hub 取消即中止本地执行
+    let canceled = false;
+    const cancelWatch = setInterval(() => {
+      fetch(this.options.serverUrl + "/agent/task/" + encodeURIComponent(task.id))
+        .then(r => r.json() as Promise<{ state?: string }>)
+        .then(j => { if (j.state === "canceled") canceled = true; })
+        .catch(() => {});
+    }, 3000);
     try {
       for await (const ev of this.options.handler(task)) {
+        if (canceled) throw new Error("hub 已取消该任务");
         if (ev.kind === "artifact") {
           // 文件上传到服务端文件通道，消息体只留 URI
           const uri = await this.uploadFile(ev.artifact.name, (ev.artifact as any).data ?? "");
           await this.report(task.id, undefined, undefined, [{ name: ev.artifact.name, uri }]);
         } else if (ev.kind === "message") {
+          if (canceled) throw new Error("hub 已取消该任务");
           await this.report(task.id, ev.text);
         } else if (ev.kind === "status" && ev.status.state !== "working") {
           await this.report(task.id, undefined, ev.status.state);
@@ -87,6 +97,8 @@ export class AgentClient {
       await this.report(task.id, undefined, "completed");
     } catch (err) {
       await this.report(task.id, String(err), "failed");
+    } finally {
+      clearInterval(cancelWatch);
     }
   }
 

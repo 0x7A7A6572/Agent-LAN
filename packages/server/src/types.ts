@@ -20,8 +20,8 @@ export interface OrderCreateInput {
   parent?: string; blockedBy?: string[];
 }
 export interface OrderUpdateInput {
-  status?: string; priority?: Order["priority"]; tags?: string[];
+  title?: string; status?: string; priority?: Order["priority"]; tags?: string[];
   assignee?: string; owner?: string; startDate?: string; dueDate?: string;
-  description?: string; blockedBy?: string[]; force?: boolean;
+  description?: string; parent?: string; blockedBy?: string[]; force?: boolean;
   note?: string;
 }

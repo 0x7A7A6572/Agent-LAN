@@ -74,26 +74,41 @@ OK=0
 
 log() { echo "[$(date '+%H:%M:%S')] $*" >&2; }
 
+# 更新结果上报 hub：best-effort，失败不拖垮本地流程
+report_update() {
+  curl -s --max-time 5 -X POST "http://$SERVER/worker/update-report" \
+    -H 'content-type: application/json' \
+    -d "{\"name\":\"$NAME\",\"level\":\"$1\",\"message\":\"$2\"}" >/dev/null 2>&1 || true
+}
+
 # 自更新：hub 版本与本地不一致时拉新脚本，校验后原子替换并 exec 重启
 # 仅对落盘运行的脚本生效；curl|bash 直跑无可替换文件，跳过并提示
 self_update() {
   local ver="$1"
   [ -f "$NEWF" ] && rm -f "$NEWF"
   if ! curl -s --max-time 15 "http://$SERVER/worker.sh" -o "$NEWF" || [ ! -s "$NEWF" ]; then
-    log "[!] 自更新下载失败，沿用当前版本继续"; return 0
+    log "[!] 自更新下载失败，沿用当前版本继续"
+    report_update error "下载失败，沿用版本 $ver"
+    return 0
   fi
   grep -q 'WORKER_VERSION=' "$NEWF" && grep -q 'mac_check_in' "$NEWF" || {
-    log "[!] 自更新内容校验不过（非 worker 脚本），放弃"; rm -f "$NEWF"; return 0
+    log "[!] 自更新内容校验不过（非 worker 脚本），放弃"; rm -f "$NEWF"
+    report_update error "内容校验不过，放弃更新"
+    return 0
   }
   local nv
   nv=$(grep -m1 'WORKER_VERSION=' "$NEWF" | sed 's/.*=//;s/"//g')
   [ "$nv" = "$ver" ] && { rm -f "$NEWF"; return 0; }
   if [ ! -w "$(dirname "$SELF")" ] || [ ! -w "$SELF" ]; then
-    log "[!] 脚本文件不可写，跳过自更新（版本 $ver -> $nv）"; rm -f "$NEWF"; return 0
+    log "[!] 脚本文件不可写，跳过自更新（版本 $ver -> $nv）"; rm -f "$NEWF"
+    report_update error "脚本不可写，卡在版本 $ver（目标 $nv）"
+    return 0
   fi
-  mv "$SELF" "$BAKF" && mv "$NEWF" "$SELF" || { log "[!] 替换失败，放弃自更新"; rm -f "$NEWF"; return 0; }
+  mv "$SELF" "$BAKF" && mv "$NEWF" "$SELF" || { log "[!] 替换失败，放弃自更新"; rm -f "$NEWF"
+    report_update error "替换失败，放弃更新"; return 0; }
   chmod --reference="$BAKF" "$SELF" 2>/dev/null || chmod +x "$SELF" 2>/dev/null
   log "[↑] 已更新到版本 $nv，重启脚本（旧版存于 $BAKF）"
+  report_update info "已更新 $ver -> $nv，重启脚本"
   exec bash "$SELF"
 }
 
@@ -115,7 +130,7 @@ mcp_call() {
 
 for i in $(seq 1 $MAX); do
   # ---------- 1) 注册/心跳（每次循环续命，40s 无活动判离线） ----------
-  HB=$(mcp_call mac_check_in "{\"name\":\"$NAME\",\"agent\":\"$AGENT\",\"description\":\"$DESC\"}")
+  HB=$(mcp_call mac_check_in "{\"name\":\"$NAME\",\"agent\":\"$AGENT\",\"description\":\"$DESC\",\"host\":\"$(hostname)\"}")
   if echo "$HB" | grep -q '节点名 .* 已被主机'; then
     log "[x] 节点名冲突：$(echo "$HB" | grep -o '节点名 [^"]*')"
     log "[x] 请停掉本脚本，换一个 NAME 重新启动（同机多实例 NAME 必须各不相同）"
@@ -143,6 +158,7 @@ for i in $(seq 1 $MAX); do
   HV=$(echo "$HB" | grep -o '"workerVersion":"[^"]*"' | cut -d'"' -f4)
   if [ -n "$HV" ] && [ "$HV" != "$WORKER_VERSION" ] && [ -f "${BASH_SOURCE[0]}" ]; then
     log "[↑] 发现新版本 $HV（当前 $WORKER_VERSION），开始自更新"
+    report_update info "发现新版本 $HV（当前 $WORKER_VERSION），开始自更新"
     self_update "$HV"
   fi
 
@@ -196,7 +212,7 @@ else: print('EMPTY')
     (
       for i in $(seq 1 360); do
         sleep 20
-        mcp_call mac_check_in "{\"name\":\"$NAME\",\"agent\":\"$AGENT\",\"description\":\"$DESC\"}" >/dev/null 2>&1 || true
+        mcp_call mac_check_in "{\"name\":\"$NAME\",\"agent\":\"$AGENT\",\"description\":\"$DESC\",\"host\":\"$(hostname)\"}" >/dev/null 2>&1 || true
       done
     ) >/dev/null 2>&1 &
     exit 0

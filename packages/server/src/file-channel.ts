@@ -40,4 +40,31 @@ export class FileChannel {
     const p = path.join(this.dir, safe);
     return fs.existsSync(p) ? fs.readFileSync(p) : undefined;
   }
+
+  /** 按展示名反查文件在磁盘上的绝对路径，找不到返回 undefined */
+  dirOf(name: string): string | undefined {
+    const safe = name.replace(/[\/:*?"<>|]/g, "_");
+    for (const f of fs.readdirSync(this.dir)) {
+      // 存储名=uuid前缀-原名，匹配后缀即可
+      if (f.endsWith("-" + safe)) return path.join(this.dir, f);
+    }
+    return undefined;
+  }
+
+  /** 资料库列表：按修改时间倒序 */
+  list(): { name: string; size: number; mtime: string; uri: string }[] {
+    return fs.readdirSync(this.dir)
+      .filter(f => fs.statSync(path.join(this.dir, f)).isFile())
+      .map(f => {
+        const st = fs.statSync(path.join(this.dir, f));
+        const dot = f.indexOf("-");
+        return {
+          name: dot > 0 ? f.slice(dot + 1) : f,
+          size: st.size,
+          mtime: new Date(st.mtimeMs).toISOString(),
+          uri: this.publicRoot + "/files/" + f,
+        };
+      })
+      .sort((a, b) => b.mtime.localeCompare(a.mtime));
+  }
 }

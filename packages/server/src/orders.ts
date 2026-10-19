@@ -124,6 +124,7 @@ export class OrderStore {
         events.push({ at: now, by, field, from: String(from), to: String(to) });
       }
     };
+    track("title", patch.title ?? o.title);
     track("status", patch.status ?? o.status);
     track("priority", patch.priority ?? o.priority);
     track("assignee", patch.assignee ?? o.assignee);
@@ -148,9 +149,27 @@ export class OrderStore {
     const o = this.orders.get(id);
     if (!o) throw new Error("工单不存在: " + id);
     const now = new Date().toISOString();
-    o.attachments.push({ ...ref, by: ref.by, at: now });
+    // 同名附件覆盖：编辑时重复上传同一文件不应挂出两条
+    const i = o.attachments.findIndex(a => a.name === ref.name);
+    const entry = { ...ref, by: ref.by, at: now };
+    if (i >= 0) o.attachments[i] = entry;
+    else o.attachments.push(entry);
     o.updatedAt = now;
     o.timeline.push({ at: now, by: ref.by ?? "unknown", field: "attachment", to: ref.name });
+    this.save();
+    return o;
+  }
+
+  /** 按文件名移除附件；不存在则忽略（编辑后保存多次不该报错） */
+  detach(id: string, name: string, by: string): Order {
+    const o = this.orders.get(id);
+    if (!o) throw new Error("工单不存在: " + id);
+    const i = o.attachments.findIndex(a => a.name === name);
+    if (i < 0) return o;
+    o.attachments.splice(i, 1);
+    const now = new Date().toISOString();
+    o.updatedAt = now;
+    o.timeline.push({ at: now, by: by || "unknown", field: "detach", to: name });
     this.save();
     return o;
   }

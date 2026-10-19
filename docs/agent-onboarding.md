@@ -41,7 +41,11 @@
 
 安装位置 ~/.mac-worker/<agent>/（worker.sh + node.json 身份文件）。同机多个
 agent（dsh/workbuddy/...）各装各的目录，互不抢任务；同一 agent 的所有会话
-裸启动共享身份，服务端自动会话接管：
+裸启动共享身份，服务端自动会话接管。
+
+WSL 注意：不要在 WSL 里跑安装（会误装进 WSL home，与 Windows 侧身份割裂）。
+probe.sh 检测到 WSL 会自动改落到 /mnt/c/Users/<你>/.mac-worker；
+取不到 Windows 用户名时拒绝安装，确认要装 WSL 侧需 FORCE_WSL_INSTALL=1。
 
     bash ~/.mac-worker/<agent>/worker.sh
 
@@ -68,6 +72,8 @@ Node 环境的接入方也可以直接用 @mac/client 的 AgentClient，行为�
 2. 需要人工确认时 mac_report(state="input-required"、text=等谁确认什么)，
    答复会以留言送达（见「干活」节）。
 3. 完成后 mac_report(state="completed"、text=结果说明)；失败报 failed。
+   hub 侧取消任务后，客户端会自动中止本地执行并置 canceled，
+   你这轮收到失败报错即可，无需再上报。
 4. 重新启动脚本进入下一轮领活。
 
 **无 MCP 时的 curl 兜底**（worker.sh 模式本不依赖 MCP 注册，能跑命令就能上报）：
@@ -129,7 +135,10 @@ MCP 配置注册在会话级/项目级即可，端点无状态，所有实例共
 - 完成后必须 mac_report（state="completed"、text=结果说明）；
   失败也要报（state="failed"、text=原因）。
 - 执行中需要人工确认/补充信息时：mac_report(state="input-required"、
-  text=等谁确认什么)——hub 会弹通知，答复会以留言送达；不要干等或空转。
+  text=等谁确认什么)——控制台会置顶提醒并弹条，节点卡转「等人工」，答复会以留言送达；
+  不要干等或空转。注意工具名就是 mac_report，没有 request_input 这个工具。
+  任务已到终态（completed/failed/canceled）时不能再转回 input-required，
+  此时上报会返回 ok:false 与 reason，确认请求仍会作为控制台提醒送达。
 - 产出文件放 files 数组（每项 { name, contentBase64 }），上报后自动变成
   局域网共享地址，任何人可取。
 
@@ -144,9 +153,19 @@ MCP 配置注册在会话级/项目级即可，端点无状态，所有实例共
 
 任务带「[工单 ord-xxx]」前缀时属于正式工单流水线，相关工具：
 
-- mac_order_create / mac_order_get / mac_order_update / mac_order_list / mac_order_attach
+- 七个工单工具：
+  mac_order_create（建单，可 parent 指母单、blockedBy 挂依赖）
+  mac_order_get（查全量，含 timeline 与子单）
+  mac_order_update（推进状态 / 改处理人 / 改标题 / 改依赖）
+  mac_order_list（看板，按状态、处理人、标签过滤）
+  mac_order_attach（挂产物文件）
+  mac_order_cancel（取消：终止其全部活跃/待领任务，状态流转 canceled）
+  mac_order_dispatch（重新派发：可换 assignee，重建任务入队）
   以上工具都有 by 参数（你的节点名）：**流转工单必带**，timeline 归因全靠它；
   不带则流转记录写成 "mcp"，无法追溯是谁操作的。
+- 打回重做 / 节点失联后转派 / 取消后重做：用 mac_order_dispatch
+  （改 assignee 时用它，而不是只 mac_order_update 改字段——后者不重建任务）。
+  两步成对：dispatch 完若换了人，仍需 mac_send_task 通知对方。
 - 领到工单任务：先 mac_report(state="working", name=你的节点名) 报开工，
   完成后 mac_report(state="completed", ...) 上报，产物走 mac_order_attach 挂到工单上。
   不报开工，控制台工单会一直停在 backlog、没人知道你已经开始做了。
@@ -155,7 +174,10 @@ MCP 配置注册在会话级/项目级即可，端点无状态，所有实例共
 - 把工单流转给别人：mac_order_update 改 assignee 之后，必须紧跟着
   mac_send_task 通知目标节点（prompt 带工单号和验收标准）——改了指派不发任务，
   对方永远收不到活。
-- 工单由编排节点（PM，role=pm）统筹；你对工单状态有异议就 mac_send_message 找 PM。
+- 工单由编排节点统筹；编排者是谁由人在控制台设定（节点卡上的角色徽章），
+  mac_list_agents 的 role 字段即权威。对工单状态有异议时：
+  该节点在线就 mac_send_message 找它；找不到编排者/有争议，
+  就在 mac_report 的 text 里写「需人工决策：<问题>」，不要凭空 @ 一个不存在的角色。
 
 ### 文件
 

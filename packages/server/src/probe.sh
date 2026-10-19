@@ -8,6 +8,13 @@ bad() { echo "[不通过] $1"; fail=$((fail+1)); }
 
 echo "== Agent-LAN 接入体检 =="
 
+# 0) 环境判定：WSL/Git Bash 里跑会有装错 home 的风险，先说清
+IS_WSL=""
+if [ -n "$WSL_DISTRO_NAME" ]; then
+  IS_WSL=1
+  echo "[提示] 检测到 WSL 环境（$WSL_DISTRO_NAME）"
+fi
+
 # 1) bash 本身（能跑这个脚本就说明有）
 ok "bash 可用（$(bash --version | head -1 | cut -d ' ' -f1-3)）"
 
@@ -70,7 +77,28 @@ if [ "$1" = "--install" ]; then
     esac
   done
   [ -n "$INSTALL_NAME" ] || { echo "[x] 缺少 NAME=节点名"; exit 1; }
-  INSTALL_DIR="$HOME/.mac-worker/$INSTALL_AGENT"
+
+  # 安装根解析：与 worker.sh 回退口径对齐——WSL 里优先落到 Windows 用户目录，
+  # 保证 MCP 注册（可能带 host）与 worker 注册（同盘落盘）归到同一台主机
+  INSTALL_ROOT="$HOME/.mac-worker"
+  if [ -n "$IS_WSL" ] && [ -d "/mnt/c/Users" ]; then
+    WUSER=$(cmd.exe /c "echo %USERNAME%" 2>/dev/null | tr -d '\r\n' | tr -d '\r')
+    if [ -n "$WUSER" ] && [ -d "/mnt/c/Users/$WUSER" ]; then
+      echo "[提示] WSL 环境：安装到 Windows 用户目录 /mnt/c/Users/$WUSER/.mac-worker（与 worker.sh 回退口径一致）"
+      INSTALL_ROOT="/mnt/c/Users/$WUSER/.mac-worker"
+    else
+      echo "[x] WSL 里取不到 Windows 用户名（cmd.exe 不可用）。两种选择："
+      echo "    1) 在 Windows 侧 PowerShell/Git Bash 里跑本安装命令（推荐）"
+      echo "    2) 确认要装进 WSL home（$HOME/.mac-worker）的话，加 FORCE_WSL_INSTALL=1 重跑"
+      echo "    注意：装进 WSL home 会导致注册 host 口径与 Windows 侧不一致，同名会判撞名"
+      exit 1
+    fi
+  fi
+  if [ -n "$IS_WSL" ] && [ "$FORCE_WSL_INSTALL" != "1" ] && [ ! -d "/mnt/c/Users" ]; then
+    echo "[x] WSL 环境但 /mnt/c 不可达，拒绝盲装。确认要装 WSL home 用 FORCE_WSL_INSTALL=1"
+    exit 1
+  fi
+  INSTALL_DIR="$INSTALL_ROOT/$INSTALL_AGENT"
   # 一致性校验：目录已有身份且 agent 类型不符 → 拒绝安装，防装错目录
   if [ -f "$INSTALL_DIR/node.json" ]; then
     EXIST_AGENT=$(grep -o '"agent": *"[^"]*"' "$INSTALL_DIR/node.json" 2>/dev/null | cut -d'"' -f4)
@@ -93,6 +121,53 @@ if [ "$1" = "--install" ]; then
 }
 EOF
   fi
+  # 自动接入：把规范写进上层 agent「每次新会话都会读」的文件。
+  # 只写 node.json 的话，新会话不知道有这回事，还是得人工喂一遍提示词。
+  # 模板必须用引号 heredoc（'HINTEOF'）：非引号 heredoc 会把正文里的反引号与
+  # $() 当命令执行，既误起 worker，又会把正文换成垃圾。
+  write_agent_hint() {
+    local file="$1" kind="$2" hintfile
+    hintfile="$INSTALL_DIR/.hint.$$"
+    cat > "$hintfile" <<'HINTEOF'
+<!-- AGENT-LAN:BEGIN 由安装脚本自动生成，请勿手改这一段 -->
+## 局域网 Agent-LAN 接入（每次新会话先做这一步）
+
+本机已安装常驻 worker，身份节点名 __NAME__，主服务 __SERVER__。
+
+- 接活：起 bash __DIR__/worker.sh。它持续领活，拿到任务或留言就退出并打印 JSON；
+  上层拿到 JSON 后先调 mac_report(taskId, state="working", name="__NAME__") 报开工，
+  干完报 completed、失败报 failed，然后重新启动脚本进入下一轮。
+- 需要人工确认：mac_report(state="input-required", text=等谁确认什么)
+  （没有 request_input 这个工具），控制台会提醒，答复以留言送达。
+- 规范全文：curl -s http://__SERVER__/mcp/install.md ，或调工具 mac_get_guide。
+- 上报必须带 name="__NAME__"，否则状态不写回工单，等于白干。
+- 常驻 worker 已在后台时不要重复起多个，否则互相抢任务导致状态抖动。
+
+<!-- AGENT-LAN:END -->
+HINTEOF
+    sed -i "s|__NAME__|$INSTALL_NAME|g; s|__SERVER__|$SERVER|g; s|__DIR__|$INSTALL_DIR|g" "$hintfile"
+    local dir; dir=$(dirname "$file")
+    mkdir -p "$dir" 2>/dev/null
+    # 幂等：已有标记块则整段替换，没有则追加。正文走文件读取，避开 awk -v 的转义处理
+    if [ -f "$file" ] && grep -q 'AGENT-LAN:BEGIN' "$file" 2>/dev/null; then
+      awk -v hf="$hintfile" '
+        /AGENT-LAN:BEGIN/ { while ((getline l < hf) > 0) print l; close(hf); skip=1; next }
+        /AGENT-LAN:END/ { skip=0; next }
+        skip != 1 { print }
+      ' "$file" > "$file.tmp" && mv "$file.tmp" "$file"
+    else
+      [ -s "$file" ] && printf '\n\n' >> "$file"
+      cat "$hintfile" >> "$file"
+    fi
+    rm -f "$hintfile"
+    echo "[OK] 已写入 $kind 自动读取文件：$file"
+  }
+  case "$INSTALL_AGENT" in
+    dsh)  write_agent_hint "${DSH_HOME:-$HOME/.dsh}/AGENTS.md" "dsh" ;;
+    workbuddy|codebuddy) write_agent_hint "$HOME/.workbuddy/AGENTS.md" "workbuddy" ;;
+    *)    write_agent_hint "$HOME/.mac-worker/$INSTALL_AGENT/AGENT.md" "$INSTALL_AGENT" ;;
+  esac
+
   echo "[✓] 已安装到 $INSTALL_DIR"
   echo "启动：bash $INSTALL_DIR/worker.sh（配置已记忆，免参数）"
   echo "临时换名调试：NAME=xxx bash $INSTALL_DIR/worker.sh"

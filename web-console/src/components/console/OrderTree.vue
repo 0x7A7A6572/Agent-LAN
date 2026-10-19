@@ -28,6 +28,9 @@ const emit = defineEmits<{
   (e: 'status-change', id: string, status: OrderStatus): void
   (e: 'create-child', parent: Order): void
   (e: 'delete', order: Order): void
+  (e: 'cancel', order: Order): void
+  (e: 'redispatch', order: Order): void
+  (e: 'edit', order: Order): void
 }>()
 
 const expanded = defineModel<Record<string, boolean>>('expanded', { default: () => ({}) })
@@ -80,7 +83,7 @@ function toggle(id: string) {
             <span class="flex items-center gap-1.5 text-sm">
               <span
                 class="flex size-4 items-center justify-center rounded-full"
-                :class="order.status === 'done' ? 'bg-green-600' : order.status === 'canceled' ? 'bg-destructive' : order.status === 'developing' || order.status === 'testing' ? 'animate-pulse bg-blue-500' : 'border border-muted-foreground/40'"
+                :class="order.status === 'done' ? 'bg-green-600' : order.status === 'canceled' ? 'bg-destructive' : order.status === 'blocked' ? 'bg-amber-500' : order.status === 'developing' || order.status === 'testing' ? 'animate-pulse bg-blue-500' : 'border border-muted-foreground/40'"
               >
                 <svg v-if="order.status === 'done'" class="size-3 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6 9 17l-5-5" /></svg>
               </span>
@@ -103,7 +106,10 @@ function toggle(id: string) {
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
                 <DropdownMenuItem @click="emit('select', order.id)">查看详情</DropdownMenuItem>
+                <DropdownMenuItem @click="emit('edit', order)">编辑工单</DropdownMenuItem>
                 <DropdownMenuItem v-if="!order.parent" @click="emit('create-child', order)">添加子工单</DropdownMenuItem>
+                <DropdownMenuItem v-if="order.status !== 'done' && order.status !== 'canceled'" class="text-destructive" @click="emit('cancel', order)">取消工单</DropdownMenuItem>
+                <DropdownMenuItem v-if="order.status === 'canceled' || order.status === 'done'" @click="emit('redispatch', order)">重新派发</DropdownMenuItem>
                 <DropdownMenuItem class="text-destructive" @click="emit('delete', order)">删除工单</DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -129,7 +135,7 @@ function toggle(id: string) {
             <span class="flex items-center gap-1.5 text-sm">
               <span
                 class="flex size-4 items-center justify-center rounded-full"
-                :class="child.status === 'done' ? 'bg-green-600' : child.status === 'developing' || child.status === 'testing' ? 'animate-pulse bg-blue-500' : 'border border-muted-foreground/40'"
+                :class="child.status === 'done' ? 'bg-green-600' : child.status === 'canceled' ? 'bg-destructive' : child.status === 'blocked' ? 'bg-amber-500' : child.status === 'developing' || child.status === 'testing' ? 'animate-pulse bg-blue-500' : 'border border-muted-foreground/40'"
               >
                 <svg v-if="child.status === 'done'" class="size-3 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6 9 17l-5-5" /></svg>
               </span>
@@ -142,7 +148,23 @@ function toggle(id: string) {
               {{ child.assignee ?? '未指派' }}
             </span>
           </TableCell>
-          <TableCell />
+          <TableCell>
+            <DropdownMenu>
+              <DropdownMenuTrigger as-child>
+                <Button variant="ghost" size="icon" class="h-7 w-7">
+                  <Ellipsis class="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem @click="emit('select', child.id)">查看详情</DropdownMenuItem>
+                <DropdownMenuItem @click="emit('edit', child)">编辑工单</DropdownMenuItem>
+                <DropdownMenuItem @click="emit('create-child', child)">添加子工单</DropdownMenuItem>
+                <DropdownMenuItem v-if="child.status !== 'done' && child.status !== 'canceled'" class="text-destructive" @click="emit('cancel', child)">取消工单</DropdownMenuItem>
+                <DropdownMenuItem v-if="child.status === 'canceled' || child.status === 'done'" @click="emit('redispatch', child)">重新派发</DropdownMenuItem>
+                <DropdownMenuItem class="text-destructive" @click="emit('delete', child)">删除工单</DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </TableCell>
         </TableRow>
         </template>
       </template>

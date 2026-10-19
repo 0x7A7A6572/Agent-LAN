@@ -1,12 +1,17 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import * as api from '@/api/console'
-import type { Order, OrderStatus, Presence } from '@/types/console'
+import type { Order, OrderAttachment, OrderStatus, Presence } from '@/types/console'
 
 export const useConsoleStore = defineStore('console', () => {
   // 名册：SSE 全量推送，直接整表替换
   const presences = ref<Presence[]>([])
   const sseStatus = ref<'connecting' | 'live' | 'error'>('connecting')
+
+  // 等待人工确认：名册里任一节点带 waitingFor 即弹提示（已提醒过的节点不重复弹）
+  const waitingNodes = computed(() => presences.value.filter(p => p.waitingFor))
+  const waitingSig = ref('')
+  const waitingAlert = ref<{ name: string; text: string }[]>([])
 
   // 日志：服务端只留 200 条，轮询全量重绘
   const logs = ref<string[]>([])
@@ -19,6 +24,9 @@ export const useConsoleStore = defineStore('console', () => {
   const ordersLoading = ref(false)
 
   const onlineNodes = computed(() => presences.value.filter(p => p.online))
+  function dismissWaitingAlert() {
+    waitingAlert.value = []
+  }
   const nodeNames = computed(() => presences.value.map(p => p.card.name).sort())
   const summary = computed(() => {
     const g = (p: Presence) => p.groupHost || p.card.host || p.card.url
@@ -49,6 +57,13 @@ export const useConsoleStore = defineStore('console', () => {
       try {
         presences.value = JSON.parse(e.data).presences ?? []
         sseStatus.value = 'live'
+        // 只对「新进入等待」的节点弹一次，签名不变不重复打扰
+        const pending = presences.value.filter(p => p.waitingFor)
+        const sig = pending.map(p => p.card.name + '|' + p.waitingFor).sort().join(';')
+        if (sig !== waitingSig.value) {
+          waitingSig.value = sig
+          waitingAlert.value = pending.map(p => ({ name: p.card.name, text: p.waitingFor! }))
+        }
       } catch {}
     }
   }
@@ -86,7 +101,21 @@ export const useConsoleStore = defineStore('console', () => {
     await refreshOrders()
   }
 
-  async function createOrder(body: { title: string; assignee?: string; priority: string }) {
+  async function editOrder(
+    id: string,
+    patch: Partial<Order>,
+    attachments?: { add: OrderAttachment[]; remove: string[] },
+  ) {
+    const r = await api.updateOrder(id, {
+      ...patch,
+      addAttachments: attachments?.add,
+      removeAttachments: attachments?.remove,
+    })
+    await refreshOrders()
+    return r
+  }
+
+  async function createOrder(body: { title: string; assignee?: string; priority: string; parent?: string; description?: string; attachments?: OrderAttachment[] }) {
     const r = await api.createOrder(body)
     await refreshOrders()
     return r
@@ -94,6 +123,18 @@ export const useConsoleStore = defineStore('console', () => {
 
   async function deleteOrder(id: string) {
     const r = await api.deleteOrder(id)
+    await refreshOrders()
+    return r
+  }
+
+  async function cancelOrder(id: string) {
+    const r = await api.cancelOrder(id)
+    await refreshOrders()
+    return r
+  }
+
+  async function redispatchOrder(id: string, assignee?: string) {
+    const r = await api.redispatchOrder(id, assignee)
     await refreshOrders()
     return r
   }
@@ -109,6 +150,8 @@ export const useConsoleStore = defineStore('console', () => {
   return {
     presences,
     sseStatus,
+    waitingNodes,
+    waitingAlert,
     logs,
     roles,
     orders,
@@ -122,8 +165,12 @@ export const useConsoleStore = defineStore('console', () => {
     refreshRoles,
     refreshOrders,
     updateOrderStatus,
+    editOrder,
     createOrder,
     deleteOrder,
+    cancelOrder,
+    redispatchOrder,
     deleteNode,
+    dismissWaitingAlert,
   }
 })

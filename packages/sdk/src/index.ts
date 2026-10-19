@@ -44,6 +44,13 @@ export interface Task {
   artifacts: Artifact[];
   createdAt: string;
   updatedAt: string;
+  /** 最近一次投递给节点的时刻与对象：用于识别投递丢失并回收 */
+  deliveredAt?: string;
+  deliveredTo?: string;
+  /** 投递已发出但未确认送达：为 true 时进程若中断，重启后据此回收 */
+  deliveredInFlight?: boolean;
+  /** 节点是否已就本任务回报过任何结果；投递丢失的判据之一 */
+  reportedAt?: string;
 }
 
 export type InvokeEvent =
@@ -77,10 +84,14 @@ export interface AgentPresence {
   busySince?: number;
   /** 正在做的工单摘要，如「ord-xxx 登录页」 */
   workingOn?: string;
+  /** 正在等谁确认什么；有值即需人工介入，控制台据此提醒 */
+  waitingFor?: string;
   /** 心跳来源推算的对端根地址，如 http://192.168.1.2:9600 */
   baseUrl?: string;
   /** 分组用主机标识：卡片 host > 来源 IP > url 兜底（服务端算好） */
   groupHost: string;
+  /** 最近一次注册的来源 IP：同机判定的权威依据（自报 host 可能是主机名） */
+  sourceIp?: string;
   /** agent 程序类型（dsh/workbuddy/...），注册时自报并随名册下发 */
   agent?: string;
   /** 最近一次带 name 的 MCP 工具调用时刻；无则该节点只有心跳在跳 */

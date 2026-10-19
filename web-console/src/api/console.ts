@@ -1,4 +1,4 @@
-import type { Order, OrderDetail, Presence } from '@/types/console'
+import type { FileInfo, Order, OrderAttachment, OrderDetail, Presence } from '@/types/console'
 import { rpc } from './rpc'
 
 async function getJson<T>(url: string): Promise<T> {
@@ -40,6 +40,14 @@ export const savePmDoc = (text: string) =>
     r.json() as Promise<{ ok: boolean; error?: string }>,
   )
 
+export const fetchFiles = () =>
+  getJson<{ files: FileInfo[] }>('/console/files').catch(() => ({ files: [] as FileInfo[] }))
+
+export const openInExplorer = (name: string) =>
+  fetch('/console/files/open/' + encodeURIComponent(name), { method: 'POST' }).then(
+    r => r.json() as Promise<{ ok: boolean; error?: string }>,
+  )
+
 export const fetchOrders = () => getJson<{ orders?: Order[] }>('/console/orders')
 
 export const fetchOrder = (id: string) => getJson<OrderDetail | { error: string }>('/console/orders/' + id)
@@ -51,7 +59,11 @@ export const createOrder = (body: { title: string; assignee?: string; priority: 
     body: JSON.stringify(body),
   }).then(r => r.json() as Promise<{ order?: Order; error?: string }>)
 
-export const updateOrder = (id: string, patch: Partial<Order>) =>
+// patch 可附带 addAttachments / removeAttachments：附件不走字段更新，服务端单独处理
+export const updateOrder = (
+  id: string,
+  patch: Partial<Order> & { addAttachments?: OrderAttachment[]; removeAttachments?: string[] },
+) =>
   fetch('/console/orders/' + id + '/update', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -60,6 +72,18 @@ export const updateOrder = (id: string, patch: Partial<Order>) =>
 
 export const deleteOrder = (id: string) =>
   fetch('/console/orders/' + id, { method: 'DELETE' }).then(r => r.json() as Promise<{ ok: boolean }>)
+
+export const cancelOrder = (id: string) =>
+  fetch('/console/orders/' + id + '/cancel', { method: 'POST' }).then(
+    r => r.json() as Promise<{ ok: boolean; canceled?: string[]; error?: string }>,
+  )
+
+export const redispatchOrder = (id: string, assignee?: string) =>
+  fetch('/console/orders/' + id + '/dispatch', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(assignee ? { assignee } : {}),
+  }).then(r => r.json() as Promise<{ ok: boolean; error?: string }>)
 
 export const deleteNode = (name: string) =>
   fetch('/console/nodes/' + encodeURIComponent(name), { method: 'DELETE' }).then(r =>
