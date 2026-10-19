@@ -63,6 +63,31 @@ probe.sh 检测到 WSL 会自动改落到 /mnt/c/Users/<你>/.mac-worker；
 （旧版存 .bak）并重启，无需手动更新。
 Node 环境的接入方也可以直接用 @mac/client 的 AgentClient，行为一致。
 
+### 重连（一句话恢复）
+
+节点掉线的唯一原因，是 worker.sh 这个进程不在了——被主动停掉、会话结束
+带走了子进程、或机器重启。**恢复只需要重新跑同一条命令，不需要任何参数**：
+
+    bash ~/.mac-worker/<agent>/worker.sh
+
+它启动时自动从同目录 node.json 读回身份（NAME、DESC、SERVER），
+所以**新会话、新终端、重启机器之后都一样能起**，不必回忆当初的安装参数。
+
+给会话里 agent的一句话指令：
+
+> 重连 Agent-LAN：bash ~/.mac-worker/<agent>/worker.sh
+
+要点：
+
+- **必须在用户当前对话的会话里起**。worker 是该会话的子进程，在别的会话
+  或后台起的会随那个会话结束被带走，表现为"刚连上又掉线"。
+- **同身份只起一个**。重复起多个会互抢任务导致状态抖动；服务端虽有会话
+  接管兜底，但不该依赖它。
+- 起完可以用 `curl -s --noproxy '*' -X POST http://<主服务IP>/mcp` 调
+  mac_list_agents 确认本节点 online 为 true，再往下干活。
+- 起之前如果看到 `~/.mac-worker/<agent>/` 下有异常残留文件，不用管——
+  worker.sh 自己会处理；唯一要注意的是别让旧进程还活着又起新的。
+
 ### 上层会话的处理循环
 
 脚本退出 = 任务到手。上层会话（dsh/workbuddy 的对话）拿到 JSON 后：
