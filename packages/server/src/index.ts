@@ -120,8 +120,10 @@ export function createServer(options: ServerOptions): http.Server {
   } catch { /* 首次启动无文件 */ }
 
   function enqueueFor(name: string, task: Task, actor = "human-console", orderId?: string): void {
-    // 派发权门禁：PM 接管期间，跨工单派发必须经 Supervisor
-    const verdict = gate.check({ actor, target: name, orderId });
+    // 派发权门禁：PM 接管期间，跨工单派发必须经 Supervisor；
+    // 同工单返工（prompt 带 [返工] 标记）豁免——它不改变谁为哪张单负责
+    const rework = task.prompt.includes("[返工]");
+    const verdict = gate.check({ actor, target: name, orderId, rework });
     if (!verdict.allow) {
       log("[gate] 拒绝派发 -> " + name + "：" + (verdict.reason ?? ""));
       throw { code: -32603, message: verdict.reason ?? "派发被 Supervisor 门禁拦截" };
@@ -382,6 +384,47 @@ export function createServer(options: ServerOptions): http.Server {
     dispatchOrder(fresh, fresh.assignee, by);
     orderStore.update(id, { status: "developing", force: true, note: "重新派发 -> " + fresh.assignee }, by);
     return { ok: true };
+  }
+
+  /**
+   * 同工单返工：PM 接管期间唯一不经 PM 的派发通道。
+   * 发起方必须是这张单的参与者——当前 assignee、历史 assignee 或创建者。
+   */
+  function reworkOrder(orderId: string, assignee: string | undefined, note: string, by: string): { ok: boolean; taskId?: string; error?: string } {
+    const o = orderStore.get(orderId);
+    if (!o) return { ok: false, error: "工单不存在: " + orderId };
+    if (!note.trim()) return { ok: false, error: "返工必须写明原因（note）" };
+    if (!by) return { ok: false, error: "缺少 by：必须声明你的节点名" };
+    if (o.status === "done") return { ok: false, error: "工单已完成，返工请走 mac_order_dispatch 重新派发" };
+    if (o.status === "canceled") return { ok: false, error: "工单已取消，请用 mac_order_dispatch 重新派发" };
+    const target = assignee || o.assignee;
+    if (!target) return { ok: false, error: "工单未指派，返工无处可派" };
+    if (!registry.find(target)) return { ok: false, error: "目标节点不在线或未知: " + target };
+
+    // 参与者校验：当前处理人 / 历史处理人 / 创建者
+    const participated = o.assignee === by || o.owner === by || o.source === by ||
+      o.timeline.some(e => e.by === by);
+    if (!participated) {
+      return { ok: false, error: "你不是这张工单的参与者，无权发起返工（当前处理人 " + (o.assignee ?? "未指派") + "）" };
+    }
+
+    // 返工豁免写进 trace：gate 只放行带 rework 标记的请求
+    if (target !== o.assignee) orderStore.update(orderId, { assignee: target, note: "返工转派: " + note }, by);
+    const fresh = orderStore.get(orderId)!;
+    const task = {
+      id: randomUUID(),
+      state: "submitted" as const,
+      prompt: orderPrompt(fresh) + "\n\n[返工] " + note + "（发起方 " + by + "）",
+      artifacts: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    tasks.set(task.id, task);
+    saveTasks();
+    enqueueFor(target, task as any, by, orderId);
+    orderStore.update(orderId, { status: "developing", note: "返工: " + note, force: true }, by);
+    log("[order] " + orderId + " 返工 -> " + target + "（by " + by + "）");
+    return { ok: true, taskId: task.id };
   }
 
   /** 客户端上报结果：更新任务并推送事件；终态任务拒绝覆写（防取消后被 completed 盖回） */
@@ -1298,6 +1341,7 @@ const mcpDeps: McpFacadeDeps = {
     orderStore.attach(id, { name, uri, by });
     return { name, uri, by };
   },
+  rework: (orderId, assignee, note, by) => reworkOrder(orderId, assignee, note, by),
   orderCancel: (id, by) => cancelOrder(id, by),
   orderRedispatch: (id, assignee, by) => redispatchOrder(id, assignee, by),
   getGuide: () => installMd(),

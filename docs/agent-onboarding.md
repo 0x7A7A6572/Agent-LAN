@@ -130,6 +130,20 @@ mac_check_in({ "name": "<节点名>", "state": "working", "workingOn": "人工�
 - **不带 `state` 的是纯心跳**，不会改动现有执行态 —— 伴生心跳不会把执行中打回空闲。
 - 有任务在跑时不要用 `idle` 去清，hub 会忽略（任务态的清除只认 `mac_report`）。
 
+### Supervisor 接管期间有什么不一样
+
+人在控制台把派发权交给 PM 后（PM 接管模式），规则变化：
+
+- **跨工单派新活必须经 PM**：`mac_send_task` 派给非本单处理人会直接被拒，
+  返回「PM 接管期间，跨工单派发必须经 Supervisor」
+- **同工单返工不受限**：用 mac_rework，见工单节
+- **留言完全不受影响**：mac_send_message 照常，PM 只是能看到
+- **上报照常**：mac_report 不受门禁影响
+
+PM 超过 60 秒没有成功决策会自动降级放行，控制台会提示。
+判断当前有没有被接管：看 `mac_list_agents` 或用 mac_check_in 的返回，
+控制台节点卡与拓扑中心的文字就是权威。
+
 ### 派活给别人
 
 - mac_list_agents 找目标节点 → mac_send_task（prompt=任务内容、target=对方节点名）
@@ -154,6 +168,10 @@ mac_check_in({ "name": "<节点名>", "state": "working", "workingOn": "人工�
 - 打回重做 / 节点失联后转派 / 取消后重做：用 mac_order_dispatch
   （改 assignee 时用它，而不是只 mac_order_update 改字段——后者不重建任务）。
   两步成对：dispatch 完若换了人，仍需 mac_send_task 通知对方。
+- **同工单内返工用 mac_rework**（id + note + by）：测试验出问题打回开发、
+  开发改完请测试复验，都走它。它校验你确实参与过这张单（当前/历史处理人或创建者），
+  通过后自动重建任务并把工单拉回 developing。
+  这是 Supervisor 接管期间**唯一不需要 PM 介入**的派发通道，别用 mac_send_task 绕。
 - 领到工单任务：先 mac_report(state="working", name=你的节点名) 报开工，
   完成后 mac_report(state="completed", ...) 上报，产物走 mac_order_attach 挂到工单上。
   不报开工，控制台工单会一直停在 backlog、没人知道你已经开始做了。

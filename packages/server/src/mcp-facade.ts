@@ -18,6 +18,8 @@ export interface McpFacadeDeps {
   report: (taskId: string, state: string, text?: string, artifacts?: { name: string; uri: string }[], by?: string) => { ok: boolean; reason?: string };
   /** 派任务给指定节点 */
   sendTask: (prompt: string, target?: string, actor?: string) => Promise<{ taskId: string; state: string }>;
+  /** 同工单返工：调用方必须是该单参与者，hub 校验后重建任务（PM 接管期间的合法通道） */
+  rework: (orderId: string, assignee: string | undefined, note: string, by: string) => { ok: boolean; taskId?: string; error?: string };
   /** 查任务 */
   getTask: (taskId: string) => unknown;
   /** 列出在册节点 */
@@ -114,7 +116,9 @@ const TOOLS = [
   },
   {
     name: "mac_send_task",
-    description: "把任务派给局域网内另一个节点执行。target 省略时由主服务本机执行",
+    description:
+      "把任务派给局域网内另一个节点执行。target 省略时由主服务本机执行。" +
+      "注意：PM 接管期间跨工单派活会被门禁拒绝，同工单返工请改用 mac_rework",
     inputSchema: {
       type: "object",
       properties: {
@@ -251,6 +255,23 @@ const TOOLS = [
         by: { type: "string", description: "你的节点名，timeline 归因" }
       },
       required: ["id"]
+    }
+  },
+  {
+    name: "mac_rework",
+    description:
+      "同工单返工：把工单重新派给当前或指定 assignee 再做一轮。" +
+      "这是 PM 接管期间唯一不需要 PM 介入的派发通道——前提是你确实参与过这张单（当前 assignee / 原 assignee / 创建者）。" +
+      "测试验出问题打回开发、开发改完让测试复验，都用它，不要用 mac_send_task 绕",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "工单 id" },
+        assignee: { type: "string", description: "缺省给当前 assignee" },
+        note: { type: "string", description: "返工原因，写进 timeline，必填" },
+        by: { type: "string", description: "你的节点名，hub 据此校验你有没有资格发起返工" }
+      },
+      required: ["id", "note", "by"]
     }
   },
   {
@@ -494,6 +515,17 @@ export async function mcpHandle(raw: string, req: http.IncomingMessage, res: htt
             } catch (err: any) {
               replyError(orderErrorCode(String(err?.message ?? err)), String(err?.message ?? err));
             }
+            return;
+          }
+          case "mac_rework": {
+            const r = deps.rework(
+              String(a.id),
+              a.assignee ? String(a.assignee) : undefined,
+              String(a.note ?? ""),
+              String(a.by ?? "")
+            );
+            if (!r.ok) replyError(-32000, r.error ?? "返工失败");
+            else reply(toolResult(r));
             return;
           }
           case "mac_order_list": {
