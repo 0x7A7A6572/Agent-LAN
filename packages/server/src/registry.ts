@@ -26,6 +26,8 @@ type Persisted = Pick<AgentPresence, "card" | "lastSeen" | "online" | "baseUrl" 
 export class Registry {
   private agents = new Map<string, AgentPresence>();
   private saveTimer?: NodeJS.Timeout;
+  /** 在线状态翻转回调：Supervisor 靠它感知节点上下线 */
+  onPresenceChange?: (name: string, online: boolean) => void;
 
   constructor(private filePath?: string) {
     if (!filePath) return;
@@ -108,7 +110,13 @@ export class Registry {
       busyUntil: existing?.busyUntil,
       sourceIp: sourceIp ?? existing?.sourceIp
     });
-    if (!existing) this.save();
+    if (!existing) {
+      this.save();
+      this.onPresenceChange?.(card.name, true);
+    } else if (!existing.online) {
+      // 离线节点重新上线也要通知，Supervisor 靠它恢复派发
+      this.onPresenceChange?.(card.name, true);
+    }
     return { reconnected: !existing?.online && !!existing };
   }
 
@@ -189,6 +197,7 @@ export class Registry {
       if (!busyOk && age > OFFLINE_AFTER_MS && p.online) {
         p.online = false;
         this.save();
+        this.onPresenceChange?.(p.card.name, false);
       }
     }
   }

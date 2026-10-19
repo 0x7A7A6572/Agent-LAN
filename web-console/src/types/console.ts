@@ -39,6 +39,30 @@ export interface PmState {
   apiKeyConfigured?: boolean
 }
 
+export interface PmConfigView {
+  enabled: boolean
+  baseUrl: string
+  model: string
+  temperature: number
+  debounceMs: number
+  tickMs: number
+  maxActionsPerDecision: number
+  tokenBudget: number
+  timeoutMs: number
+  apiKeyConfigured: boolean
+}
+
+export interface PmDecisionView {
+  at: number
+  eventCount: number
+  reasoning: string
+  actions: { kind: string }[]
+  applied: number
+  rejected: { reason: string }[]
+  error?: string
+  durationMs: number
+}
+
 export type OrderStatus =
   | 'backlog'
   | 'analyzing'

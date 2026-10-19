@@ -9,6 +9,8 @@ const PRIORITIES = ["urgent", "high", "normal", "low"];
 export class OrderStore {
   private orders = new Map<string, Order>();
   private saveTimer?: NodeJS.Timeout;
+  /** 变更回调：hub 用它把工单事件喂给 Supervisor，不改变存储职责 */
+  onChange?: (kind: "created" | "updated", order: Order, actor: string) => void;
 
   constructor(private filePath: string) {
     let raw: Order[];
@@ -65,6 +67,7 @@ export class OrderStore {
     };
     this.orders.set(order.id, order);
     this.save();
+    this.onChange?.("created", order, by);
     return order;
   }
 
@@ -141,6 +144,7 @@ export class OrderStore {
       o.updatedAt = now;
       o.timeline.push(...events);
       this.save();
+      this.onChange?.("updated", o, by);
     }
     return o;
   }

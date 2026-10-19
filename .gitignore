@@ -11,3 +11,6 @@ dist/
 .nodes.json
 .tasks.json
 .taskstore.json
+.pm-config.json
+.pm-memory.json
+.pm-policy.md

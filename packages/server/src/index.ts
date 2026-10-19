@@ -15,6 +15,11 @@ import { OrderStore } from "./orders.js";
 import type { Order } from "./types.js";
 import { RoleStore } from "./roles.js";
 import { DispatchGate } from "./gate.js";
+import { EventBus } from "./events.js";
+import type { HubEvent } from "./events.js";
+import { loadConfig, loadMemory, saveConfig, saveMemory, pmPaths } from "./pm.js";
+import type { PmConfig, PmMemory } from "./pm.js";
+import { runDecision } from "./pm-runner.js";
 import { mcpHandle, type McpFacadeDeps } from "./mcp-facade.js";
 export { createTui } from "./tui.js";
 export { createRemoteProxy } from "./remote-proxy.js";
@@ -430,6 +435,90 @@ export function createServer(options: ServerOptions): http.Server {
   // 派发权门禁：调度控制流归 Supervisor，PM 只是临时持有者
   const gate = new DispatchGate({ pmTimeoutMs: 60000, onLog: log });
   gate.start();
+
+  // ── Supervisor 决策闭环 ──────────────────────────────────────────────
+  const pmDir = options.ordersPath ? path.dirname(options.ordersPath)
+    : path.resolve(options.filesDir ?? ".mac-files", "..");
+  const pmFiles = pmPaths(pmDir);
+  let pmConfig: PmConfig = loadConfig(pmFiles.config);
+  const pmMemory: PmMemory = loadMemory(pmFiles.memory);
+  let pmPolicy = "";
+  try { pmPolicy = fs.readFileSync(pmFiles.policy, "utf8"); } catch { /* 策略文件可选 */ }
+
+  function persistMemory(): void {
+    try { saveMemory(pmFiles.memory, pmMemory); }
+    catch (err: any) { log("[pm] 记忆落盘失败: " + String(err?.message ?? err)); }
+  }
+
+  /** 一次决策：批次交给 LLM，动作逐条过校验后落地 */
+  async function runPmBatch(batch: HubEvent[]): Promise<void> {
+    const decision = await runDecision(batch, {
+      config: () => pmConfig,
+      memory: () => pmMemory,
+      policy: () => pmPolicy,
+      openOrders: () => orderStore.list({}).filter(o => o.status !== "done" && o.status !== "canceled"),
+      nodes: () => withRoles(registry.list()).map(p => ({
+        name: p.card.name,
+        online: p.online,
+        state: p.state,
+        workingOn: p.workingOn,
+        role: p.role,
+        queuedCount: p.queuedCount
+      })),
+      createOrders: (list, by) => list.map(o => {
+        const created = orderStore.create({
+          title: o.title,
+          description: o.description,
+          parent: o.parent,
+          priority: o.priority,
+          blockedBy: o.blockedBy
+        }, by);
+        return created.id;
+      }),
+      assign: (id, assignee, note, by) => { orderStore.update(id, { assignee, note }, by); },
+      updateStatus: (id, status, note, by) => { orderStore.update(id, { status: status as any, note, force: true }, by); },
+      sendMessage: (to, text) => {
+        if (!mailboxes.has(to)) mailboxes.set(to, []);
+        mailboxes.get(to)!.push({ text, from: "hub-pm", at: new Date().toISOString() });
+      },
+      dispatch: (id, assignee, by) => {
+        const o = orderStore.get(id);
+        if (o) dispatchOrder(o, assignee, by);
+      },
+      log
+    });
+
+    pmMemory.decisions.push(decision);
+    persistMemory();
+    if (decision.error) log("[pm] 决策失败: " + decision.error);
+    else log("[pm] 决策: " + (decision.reasoning || "(无推理)") + " 执行 " + decision.applied + "/" + decision.actions.length +
+      (decision.rejected.length ? " 驳回 " + decision.rejected.length : ""));
+    // 成功决策续命门禁，避免误判降级
+    if (!decision.error) gate.beat();
+  }
+
+  const eventBus = new EventBus({
+    debounceMs: pmConfig.debounceMs,
+    tickMs: pmConfig.tickMs,
+    onBatch: async batch => {
+      if (gate.current !== "pm") return;
+      await runPmBatch(batch);
+    },
+    onLog: log
+  });
+  // 事件采集：工单与名册变更喂给 Supervisor；PM 自己产生的变更不进触发队列
+  orderStore.onChange = (kind, o, actor) => {
+    eventBus.emit({
+      kind: kind === "created" ? "order/created" : "order/status",
+      at: Date.now(),
+      data: { id: o.id, title: o.title, status: o.status, assignee: o.assignee, parent: o.parent },
+      causedBy: actor
+    });
+  };
+  registry.onPresenceChange = (name, online) => {
+    eventBus.emit({ kind: online ? "node/online" : "node/offline", at: Date.now(), data: { name }, causedBy: "hub" });
+  };
+
   // 角色回写：控制台改角色后同步写进该节点本地的 node.json。
   // 仅同机有效——hub 不知道远端节点安装目录，跨机器由节点自己同步。
   // node.json 是 worker.sh 的身份文件，写坏会导致节点起不来，故一律尽力而为。
@@ -884,8 +973,43 @@ export function createServer(options: ServerOptions): http.Server {
       res.end(JSON.stringify({
         mode: gate.current,
         pmName: gate.pmNodeName,
-        enabled: gate.current !== "human"
+        enabled: gate.current !== "human",
+        model: pmConfig.model,
+        baseUrl: pmConfig.baseUrl,
+        apiKeyConfigured: !!pmConfig.apiKey
       }));
+      return;
+    }
+    if (req.method === "GET" && url.pathname === "/console/pm/config") {
+      res.writeHead(200, { "content-type": "application/json", connection: "close" });
+      // key 不明文下发，只告知是否已配置
+      const { apiKey, ...rest } = pmConfig;
+      res.end(JSON.stringify({ ...rest, apiKeyConfigured: !!apiKey }));
+      return;
+    }
+    if (req.method === "PUT" && url.pathname === "/console/pm/config") {
+      let body = "";
+      for await (const chunk of req) body += chunk;
+      try {
+        const patch = JSON.parse(body || "{}");
+        // apiKey 传空串表示保持原值，避免前端回显后误清空
+        const next: PmConfig = { ...pmConfig, ...patch };
+        if (!patch.apiKey) next.apiKey = pmConfig.apiKey;
+        pmConfig = saveConfig(pmFiles.config, next);
+        log("[pm] 配置已更新: model=" + pmConfig.model + " baseUrl=" + pmConfig.baseUrl);
+        res.writeHead(200, { "content-type": "application/json", connection: "close" });
+        const { apiKey: _k, ...safe } = pmConfig;
+        res.end(JSON.stringify({ ok: true, config: { ...safe, apiKeyConfigured: !!_k } }));
+      } catch (err: any) {
+        res.writeHead(200, { "content-type": "application/json", connection: "close" });
+        res.end(JSON.stringify({ ok: false, error: String(err?.message ?? err) }));
+      }
+      return;
+    }
+    if (req.method === "GET" && url.pathname === "/console/pm/decisions") {
+      res.writeHead(200, { "content-type": "application/json", connection: "close" });
+      const limit = Math.min(Number(url.searchParams.get("limit")) || 20, 100);
+      res.end(JSON.stringify({ decisions: pmMemory.decisions.slice(-limit).reverse() }));
       return;
     }
     if (req.method === "POST" && url.pathname === "/console/pm/mode") {
@@ -898,6 +1022,8 @@ export function createServer(options: ServerOptions): http.Server {
         return;
       }
       gate.setMode(mode, "human-console");
+      // enabled 与派发权保持一致：配置文件里那一项就是当前是否接管
+      pmConfig = saveConfig(pmFiles.config, { ...pmConfig, enabled: mode === "pm" });
       pushPresence();
       res.writeHead(200, { "content-type": "application/json", connection: "close" });
       res.end(JSON.stringify({ ok: true, mode: gate.current }));
@@ -1189,6 +1315,7 @@ function mcpRoute(body: string, req: http.IncomingMessage, res: http.ServerRespo
   }
   // 启动即回收：上次进程若在「投递已发出、确认未写回」之间被杀，任务没人拿到
   reclaimInFlight();
+  eventBus.start();
   return httpServer;
 }
 

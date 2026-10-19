@@ -6,6 +6,7 @@ import { setNodeRole, saveRoles } from '@/api/console'
 import CreateOrderDialog from '@/components/console/CreateOrderDialog.vue'
 import NodeCard from '@/components/console/NodeCard.vue'
 import NodeTopology from '@/components/console/NodeTopology.vue'
+import PmPanel from '@/components/console/PmPanel.vue'
 import FloatingTabs from '@/components/console/FloatingTabs.vue'
 import type { FloatingTab } from '@/components/console/floating-tabs'
 import OrderPanel from '@/components/console/OrderPanel.vue'
@@ -185,7 +186,7 @@ async function onOrderRedispatch(order: Order) {
       </span>
     </header>
 
-      <main class="flex min-h-0 flex-1 flex-col gap-4 p-4 pb-20 md:gap-6 md:p-6 md:pb-20">
+      <main class="flex min-h-0 flex-1 flex-col gap-4 p-4 pb-28 md:gap-6 md:p-6 md:pb-28">
         <!-- 人工确认提醒：有节点卡在等待人类答复时置顶，可关闭 -->
         <div
           v-if="store.waitingAlert.length"
@@ -291,22 +292,24 @@ async function onOrderRedispatch(order: Order) {
           <LogPanel :logs="store.logs" class="min-h-[300px] flex-1" />
         </div>
 
-        <!-- 设置视图：先占位，后续承载 PM 面板 -->
-        <div v-show="view === 'settings'" class="flex flex-col gap-4">
-          <Card>
-            <CardHeader>
-              <CardTitle class="text-sm">设置</CardTitle>
-            </CardHeader>
-            <CardContent class="flex flex-col gap-2">
-              <Button variant="outline" size="sm" class="w-fit" @click="rolesOpen = true">
-                <UserCog class="h-4 w-4" />角色库
-              </Button>
-              <Button variant="outline" size="sm" class="w-fit" @click="installOpen = true">
-                <FileText class="h-4 w-4" />安装说明
-              </Button>
-              <p class="mt-2 text-xs text-muted-foreground">PM 接管配置将在下一版接入。</p>
-            </CardContent>
-          </Card>
+        <!-- 设置视图：PM 接管 + 角色库 + 安装说明 -->
+        <div v-show="view === 'settings'" class="grid gap-4 lg:grid-cols-[1fr_280px]">
+          <PmPanel />
+          <div class="flex flex-col gap-4">
+            <Card>
+              <CardHeader>
+                <CardTitle class="text-sm">其他</CardTitle>
+              </CardHeader>
+              <CardContent class="flex flex-col gap-2">
+                <Button variant="outline" size="sm" class="justify-start" @click="rolesOpen = true">
+                  <UserCog class="h-4 w-4" />角色库
+                </Button>
+                <Button variant="outline" size="sm" class="justify-start" @click="installOpen = true">
+                  <FileText class="h-4 w-4" />安装说明
+                </Button>
+              </CardContent>
+            </Card>
+          </div>
         </div>
       </main>
 

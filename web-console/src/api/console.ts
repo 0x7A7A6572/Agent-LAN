@@ -1,4 +1,4 @@
-import type { FileInfo, Order, OrderAttachment, OrderDetail, PmState, Presence } from '@/types/console'
+import type { FileInfo, Order, OrderAttachment, OrderDetail, PmConfigView, PmDecisionView, PmState, Presence } from '@/types/console'
 import { rpc } from './rpc'
 
 async function getJson<T>(url: string): Promise<T> {
@@ -28,6 +28,26 @@ export const setNodeRole = (name: string, role: string) =>
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ name, role }),
   }).then(r => r.json() as Promise<{ ok: boolean; role?: string; error?: string }>)
+
+export const fetchPmConfig = () =>
+  getJson<PmConfigView>('/console/pm/config').catch(() => null)
+
+export const savePmConfig = (patch: Partial<PmConfigView> & { apiKey?: string }) =>
+  fetch('/console/pm/config', {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(patch),
+  }).then(r => r.json() as Promise<{ ok: boolean; error?: string; config?: PmConfigView }>)
+
+export const setPmMode = (mode: 'human' | 'pm') =>
+  fetch('/console/pm/mode', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ mode }),
+  }).then(r => r.json() as Promise<{ ok: boolean; mode?: string; error?: string }>)
+
+export const fetchPmDecisions = (limit = 20) =>
+  getJson<{ decisions?: PmDecisionView[] }>('/console/pm/decisions?limit=' + limit).catch(() => ({ decisions: [] }))
 
 export const fetchPmState = () =>
   getJson<PmState>('/console/pm/state').catch(() => ({ mode: 'human', enabled: false } as PmState))
