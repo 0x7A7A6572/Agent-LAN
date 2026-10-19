@@ -1,6 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
-import { Mail, Pencil, TriangleAlert } from 'lucide-vue-next'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { logoOf } from '@/composables/useLogo'
 import type { Presence } from '@/types/console'
 
@@ -17,10 +16,32 @@ const emit = defineEmits<{
   (e: 'mail', name: string): void
 }>()
 
-const W = 900
-const H = 520
-const CENTER = { x: W / 2, y: H / 2 }
-const LEAF_R = 168
+// 视图尺寸跟随容器实测比例：分栏后拓扑变宽，固定 900x520 会让环形显得空
+const W = ref(900)
+const H = ref(520)
+const CENTER = computed(() => ({ x: W.value / 2, y: H.value / 2 }))
+const LEAF_R = computed(() => Math.min(W.value, H.value * 1.35) * 0.31)
+
+const hostRef = ref<HTMLElement | null>(null)
+let ro: ResizeObserver | undefined
+
+function measure() {
+  const el = hostRef.value
+  if (!el) return
+  const r = el.getBoundingClientRect()
+  if (r.width > 0) W.value = Math.round(r.width)
+  if (r.height > 0) H.value = Math.round(r.height)
+}
+
+onMounted(() => {
+  measure()
+  if (typeof ResizeObserver !== 'undefined' && hostRef.value) {
+    ro = new ResizeObserver(() => measure())
+    ro.observe(hostRef.value)
+  }
+})
+onUnmounted(() => ro?.disconnect())
+watch(() => props.presences.length, () => nextTick(measure))
 
 /** 主机分组：同一 groupHost 的节点归成一条枝干，拓扑才有「局域网」的层级感 */
 const groups = computed(() => {
@@ -48,25 +69,30 @@ const pmActive = computed(() => {
   return external ? !!external.online : true
 })
 
-/** 叶子节点绕中心排布；PM 单独占据中心位，不参与环形 */
+/**
+ * 叶子绕中心排布。容器变宽时横轴半径同步放大，保持环形贴合画布而不是堆在中间。
+ * 超过 8 个分内外两环，外环收窄一点避免贴边。
+ */
 const layout = computed(() => {
   const leaves = props.presences.filter(p => p !== pmNode.value)
-  const total = leaves.length || 1
-  const nodes = leaves.map((p, i) => {
-    const ring = total > 8 && i >= Math.ceil(total / 2) ? 1 : 0
-    const half = ring === 0 ? Math.ceil(total / (total > 8 ? 2 : 1)) : Math.floor(total / 2)
-    const idx = ring === 0 ? i : i - Math.ceil(total / 2)
-    const span = Math.PI * 1.55
-    const start = -Math.PI * 0.28
-    const angle = start + (idx / Math.max(1, half - (half === 1 ? 0 : 1))) * span
-    const r = ring === 0 ? LEAF_R : LEAF_R - 62
+  const total = leaves.length
+  if (!total) return []
+  const rx = Math.min(W.value * 0.36, LEAF_R.value * 1.55)
+  const ry = Math.min(H.value * 0.34, LEAF_R.value * 1.1)
+  const perRing = total > 8 ? Math.ceil(total / 2) : total
+  return leaves.map((p, i) => {
+    const ring = total > 8 && i >= perRing ? 1 : 0
+    const idx = ring === 0 ? i : i - perRing
+    const count = ring === 0 ? perRing : total - perRing
+    // 整圈均分，从正上方开始，避免起点偏左造成的视觉不平衡
+    const angle = -Math.PI / 2 + (idx / Math.max(1, count)) * Math.PI * 2
+    const k = ring === 0 ? 1 : 0.62
     return {
       p,
-      x: CENTER.x + Math.cos(angle) * r,
-      y: CENTER.y + Math.sin(angle) * r,
+      x: CENTER.value.x + Math.cos(angle) * rx * k,
+      y: CENTER.value.y + Math.sin(angle) * ry * k,
     }
   })
-  return nodes
 })
 
 function statusOf(p: Presence): { label: string; dot: string; text: string } {
@@ -84,20 +110,24 @@ function logo(name: string, agent?: string) {
 const links = computed(() =>
   layout.value.map(n => ({
     key: n.p.card.name,
-    x1: CENTER.x,
-    y1: CENTER.y,
+    x1: CENTER.value.x,
+    y1: CENTER.value.y,
     x2: n.x,
     y2: n.y,
     active: pmActive.value && n.p.online,
   })),
 )
-
-const hovered = ref<string | null>(null)
 </script>
 
 <template>
-  <div class="relative w-full overflow-x-auto rounded-lg border bg-gradient-to-br from-card to-muted/30">
-    <svg :viewBox="`0 0 ${W} ${H}`" class="w-full min-w-[720px]" role="img" aria-label="局域网节点拓扑">
+  <div ref="hostRef" class="relative w-full flex-1 overflow-hidden rounded-lg border bg-gradient-to-br from-card to-muted/30">
+    <svg
+      :viewBox="`0 0 ${W} ${H}`"
+      preserveAspectRatio="xMidYMid meet"
+      class="h-full w-full"
+      role="img"
+      aria-label="局域网节点拓扑"
+    >
       <defs>
         <radialGradient id="pmGlow" cx="50%" cy="50%" r="50%">
           <stop offset="0%" stop-color="rgb(59 130 246 / 0.28)" />
@@ -128,7 +158,7 @@ const hovered = ref<string | null>(null)
 
       <!-- 中心：Supervisor / 人工调度 -->
       <g v-if="pmNode || mode !== 'human'">
-        <circle v-if="pmActive" :cx="CENTER.x" :cy="CENTER.y" r="110" fill="url(#pmGlow)" />
+        <circle v-if="pmActive" :cx="CENTER.x" :cy="CENTER.y" :r="Math.round(LEAF_R * 0.62)" fill="url(#pmGlow)" />
         <circle
           :cx="CENTER.x"
           :cy="CENTER.y"

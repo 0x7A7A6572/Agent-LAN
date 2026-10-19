@@ -15,6 +15,7 @@ import RolePickDialog from '@/components/console/RolePickDialog.vue'
 import FilesDialog from '@/components/console/FilesDialog.vue'
 import InstallDialog from '@/components/console/InstallDialog.vue'
 import { Badge } from '@/components/ui/badge'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -184,7 +185,7 @@ async function onOrderRedispatch(order: Order) {
       </span>
     </header>
 
-      <main class="flex flex-1 flex-col gap-4 p-4 md:gap-6 md:p-6">
+      <main class="flex min-h-0 flex-1 flex-col gap-4 p-4 pb-20 md:gap-6 md:p-6 md:pb-20">
         <!-- 人工确认提醒：有节点卡在等待人类答复时置顶，可关闭 -->
         <div
           v-if="store.waitingAlert.length"
@@ -206,33 +207,42 @@ async function onOrderRedispatch(order: Order) {
           </Button>
         </div>
 
-        <!-- 节点视图：拓扑 + 详情卡 -->
-        <div v-show="view === 'nodes'" class="flex flex-col gap-4">
-        <!-- 局域网拓扑：Supervisor 在中心，派发链路随接管状态高亮 -->
-        <NodeTopology
-          :presences="store.presences"
-          :dispatch-mode="store.pmState.mode"
-          :pm-name="store.pmState.pmName"
-          @pick-role="onPickRole"
-        />
+        <!-- 节点视图：详情 1 份 / 拓扑 4 份横向分栏，拓扑吃满剩余宽度不空 -->
+        <div
+          v-show="view === 'nodes'"
+          class="flex min-h-0 flex-1 flex-col gap-4 lg:flex-row"
+        >
+          <!-- 详情列：窄栏纵向滚动，承载留言/删节点等操作 -->
+          <aside class="flex shrink-0 flex-col gap-3 lg:w-1/5 lg:min-w-[240px]">
+            <div class="flex items-center gap-2">
+              <span class="text-xs font-medium text-muted-foreground">节点详情</span>
+              <Badge variant="outline" class="text-[10px]">{{ store.presences.length }}</Badge>
+            </div>
+            <ScrollArea class="min-h-0 flex-1 lg:h-0">
+              <div class="flex flex-col gap-3 pr-3">
+                <NodeCard
+                  v-for="p in store.presences"
+                  :key="p.card.name"
+                  :presence="p"
+                  @pick-role="onPickRole"
+                  @delete-node="onDeleteNode"
+                />
+                <p v-if="!store.presences.length" class="py-6 text-center text-xs text-muted-foreground">
+                  暂无节点接入
+                </p>
+              </div>
+            </ScrollArea>
+          </aside>
 
-        <!-- 节点卡：拓扑的详情视图，承载留言/删节点等操作 -->
-        <div class="flex flex-col gap-3">
-          <Button variant="ghost" size="sm" class="w-fit gap-1.5 text-muted-foreground" @click="nodesOpen = !nodesOpen">
-            <ChevronRight class="h-3.5 w-3.5 transition-transform" :class="nodesOpen ? 'rotate-90' : ''" />
-            节点详情
-            <Badge variant="outline" class="text-[10px]">{{ store.presences.length }}</Badge>
-          </Button>
-          <div v-if="nodesOpen" class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-            <NodeCard
-              v-for="p in store.presences"
-              :key="p.card.name"
-              :presence="p"
+          <!-- 拓扑：Supervisor 在中心，派发链路随接管状态高亮 -->
+          <div class="flex min-h-[360px] min-w-0 flex-1 flex-col lg:h-0">
+            <NodeTopology
+              :presences="store.presences"
+              :dispatch-mode="store.pmState.mode"
+              :pm-name="store.pmState.pmName"
               @pick-role="onPickRole"
-              @delete-node="onDeleteNode"
             />
           </div>
-        </div>
         </div>
 
         <!-- 工单视图 -->
