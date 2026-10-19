@@ -48,7 +48,7 @@ function save() {
 
       <div class="grid gap-2">
         <div v-for="(row, i) in rows" :key="i" class="flex items-center gap-2">
-          <Input v-model="row.value" :placeholder="'角色名，如 pm / dev'" class="h-8" @keydown.enter="save" />
+          <Input v-model="row.value" :placeholder="'角色名，如 frontend / dev'" class="h-8" @keydown.enter="save" />
           <Button variant="ghost" size="icon" class="h-8 w-8 shrink-0 text-muted-foreground hover:text-destructive" @click="removeRow(i)">
             <X class="h-4 w-4" />
           </Button>

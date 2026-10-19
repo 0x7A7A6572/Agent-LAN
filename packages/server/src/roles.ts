@@ -2,7 +2,7 @@
 import fs from "node:fs";
 
 /** 缺省允许的角色集合，控制台可增删 */
-export const DEFAULT_ROLES = ["requirement", "product", "frontend", "backend", "test", "pm", "docs"] as const;
+export const DEFAULT_ROLES = ["requirement", "product", "frontend", "backend", "test", "docs"] as const;
 
 /** .roles.json 结构：节点映射 + 允许列表，二者同文件持久化 */
 interface RolesFile {

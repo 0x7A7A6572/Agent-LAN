@@ -29,17 +29,6 @@ export const setNodeRole = (name: string, role: string) =>
     body: JSON.stringify({ name, role }),
   }).then(r => r.json() as Promise<{ ok: boolean; role?: string; error?: string }>)
 
-export const fetchPmDoc = async () => {
-  const res = await fetch('/console/pm')
-  if (!res.ok) throw new Error('读取失败')
-  return res.text()
-}
-
-export const savePmDoc = (text: string) =>
-  fetch('/console/pm', { method: 'PUT', headers: { 'content-type': 'text/plain' }, body: text }).then(r =>
-    r.json() as Promise<{ ok: boolean; error?: string }>,
-  )
-
 export const fetchFiles = () =>
   getJson<{ files: FileInfo[] }>('/console/files').catch(() => ({ files: [] as FileInfo[] }))
 

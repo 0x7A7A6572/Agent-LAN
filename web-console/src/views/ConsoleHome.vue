@@ -1,15 +1,14 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { ClipboardList, FolderOpen, FileText, Plus, Settings, UserCog, TriangleAlert, X } from 'lucide-vue-next'
+import { FolderOpen, FileText, Plus, Settings, UserCog, TriangleAlert, X } from 'lucide-vue-next'
 import { useConsoleStore } from '@/stores/console'
-import { setNodeRole, saveRoles, savePmDoc } from '@/api/console'
+import { setNodeRole, saveRoles } from '@/api/console'
 import CreateOrderDialog from '@/components/console/CreateOrderDialog.vue'
 import NodeCard from '@/components/console/NodeCard.vue'
 import OrderPanel from '@/components/console/OrderPanel.vue'
 import LogPanel from '@/components/console/LogPanel.vue'
 import RolesDialog from '@/components/console/RolesDialog.vue'
 import RolePickDialog from '@/components/console/RolePickDialog.vue'
-import PmDialog from '@/components/console/PmDialog.vue'
 import FilesDialog from '@/components/console/FilesDialog.vue'
 import InstallDialog from '@/components/console/InstallDialog.vue'
 import { Badge } from '@/components/ui/badge'
@@ -31,7 +30,6 @@ const store = useConsoleStore()
 const rolesOpen = ref(false)
 const filesOpen = ref(false)
 const installOpen = ref(false)
-const pmOpen = ref(false)
 const pickOpen = ref(false)
 const pickName = ref('')
 const pickCurrent = ref('')
@@ -89,12 +87,6 @@ async function onRolesSave(roles: string[]) {
     await store.refreshRoles()
     log('[role] 角色库 -> ' + ((r.allowed ?? []).join(', ') || '（空）'))
   } else log('[role] 角色库保存失败')
-}
-
-async function onPmSave(text: string) {
-  const r = await savePmDoc(text)
-  if (r.ok) log('[pm] 说明书已保存（立即生效）')
-  else log('[pm] 保存失败: ' + (r.error || '未知错误'))
 }
 
 async function onDeleteNode(name: string) {
@@ -164,10 +156,6 @@ async function onOrderRedispatch(order: Order) {
             <DropdownMenuItem @click="rolesOpen = true">
               <UserCog class="h-4 w-4" />
               角色库
-            </DropdownMenuItem>
-            <DropdownMenuItem @click="pmOpen = true">
-              <ClipboardList class="h-4 w-4" />
-              PM 设定
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuLabel>帮助</DropdownMenuLabel>
@@ -268,7 +256,6 @@ async function onOrderRedispatch(order: Order) {
       :node-names="store.nodeNames"
       @create="onOrderCreate"
     />
-    <PmDialog v-model:open="pmOpen" @save="onPmSave" />
     <FilesDialog v-model:open="filesOpen" />
     <InstallDialog v-model:open="installOpen" />
     <RolePickDialog v-model:open="pickOpen" :roles="store.roles" :node-name="pickName" :current="pickCurrent" @pick="onPickConfirm" />

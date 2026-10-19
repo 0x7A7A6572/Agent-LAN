@@ -142,9 +142,9 @@ Node 环境的接入方也可以直接用 @mac/client 的 AgentClient，行为�
 - 把工单流转给别人：mac_order_update 改 assignee 之后，必须紧跟着
   mac_send_task 通知目标节点（prompt 带工单号和验收标准）——改了指派不发任务，
   对方永远收不到活。
-- 工单由编排节点统筹；编排者是谁由人在控制台设定（节点卡上的角色徽章），
-  mac_list_agents 的 role 字段即权威。对工单状态有异议时：
-  该节点在线就 mac_send_message 找它；找不到编排者/有争议，
+- 工单由人统筹：角色徽章只是能力标签（节点卡上设定，mac_list_agents 的 role
+  字段即权威），没有谁被指定为固定统筹者的说法。对工单状态有异议时：
+  用 mac_send_message 找处理人（assignee）；找不到人或有争议，
   就在 mac_report 的 text 里写「需人工决策：<问题>」，不要凭空 @ 一个不存在的角色。
 
 ### 文件

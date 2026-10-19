@@ -408,7 +408,7 @@ export function createServer(options: ServerOptions): http.Server {
     }
     return task.prompt.slice(0, 24) + (task.prompt.length > 24 ? "…" : "");
   };
-  // 名册快照附带 hub 侧角色与排队任务数：PM 与控制台的选人依据
+  // 名册快照附带 hub 侧角色与排队任务数：控制台据此展示与选人
   const withRoles = (list: AgentPresence[]) =>
     list.map(p => ({
       ...p,
@@ -651,12 +651,6 @@ export function createServer(options: ServerOptions): http.Server {
     return fs.readFileSync(tpl, "utf8");
   }
 
-  // PM 提示词：与 docs/pm-onboarding.md 同源，构建时拷贝
-  function pmMd(): string {
-    const tpl = path.join(path.dirname(fileURLToPath(import.meta.url)), "pm.md");
-    return fs.readFileSync(tpl, "utf8");
-  }
-
   const httpServer = http.createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
     const remote = remoteOf(req);
@@ -793,35 +787,6 @@ export function createServer(options: ServerOptions): http.Server {
     if (req.method === "GET" && url.pathname === "/mcp/install.md") {
       res.writeHead(200, { "content-type": "text/markdown; charset=utf-8" });
       res.end(installMd());
-      return;
-    }
-    if (req.method === "GET" && url.pathname === "/mcp/pm.md") {
-      res.writeHead(200, { "content-type": "text/markdown; charset=utf-8" });
-      res.end(pmMd());
-      return;
-    }
-    if (req.method === "GET" && url.pathname === "/console/pm") {
-      res.writeHead(200, { "content-type": "text/plain; charset=utf-8", connection: "close" });
-      res.end(pmMd());
-      return;
-    }
-    if (req.method === "PUT" && url.pathname === "/console/pm") {
-      let body = "";
-      for await (const chunk of req) body += chunk;
-      try {
-        // 双写：docs 源（防 build 覆盖回旧版）+ dist 运行时模板（pmMd 每请求现读，立即生效）
-        const distMd = path.join(path.dirname(fileURLToPath(import.meta.url)), "pm.md");
-        const srcMd = path.join(path.resolve(options.filesDir ?? ".mac-files"), "..", "docs", "pm-onboarding.md");
-        fs.writeFileSync(distMd, body);
-        try { fs.writeFileSync(srcMd, body); }
-        catch { log("[pm] 源文档写入失败，仅更新了运行时模板"); }
-        log("[pm] 说明书已更新（立即生效）");
-        res.writeHead(200, { "content-type": "application/json", connection: "close" });
-        res.end(JSON.stringify({ ok: true }));
-      } catch (err: any) {
-        res.writeHead(200, { "content-type": "application/json", connection: "close" });
-        res.end(JSON.stringify({ ok: false, error: String(err?.message ?? err) }));
-      }
       return;
     }
     if (req.method === "GET" && url.pathname === "/console/presence/stream") {
