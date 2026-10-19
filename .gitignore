@@ -5,9 +5,9 @@ dist/
 .env
 .mac-files/
 
-# è¿è¡Œæ—¶æ•°æ®
+# è¿è¡Œæ—¶æ•°æ®ï¼ˆç”± hub ç”Ÿæˆï¼Œä¸å…¥åº“ï¼‰
 .roles.json
 .orders.json
-
-# ½ÚµãÃû²áÔËĞĞÊ±ÂäÅÌ
 .nodes.json
+.tasks.json
+.taskstore.json

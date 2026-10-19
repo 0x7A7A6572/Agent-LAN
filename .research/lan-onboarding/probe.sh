@@ -1,0 +1,128 @@
+#!/usr/bin/env bash
+# Agent-LAN 接入体检：一次跑完，缺什么当场告诉你
+# 用法: SERVER=<主服务IP:端口> bash probe.sh
+SERVER=${SERVER:?用法: SERVER=<主服务IP:端口> bash probe.sh}
+pass=0; fail=0
+ok() { echo "[通过] $1"; pass=$((pass+1)); }
+bad() { echo "[不通过] $1"; fail=$((fail+1)); }
+
+echo "== Agent-LAN 接入体检 =="
+
+# 0) 环境判定：WSL/Git Bash 里跑会有装错 home 的风险，先说清
+IS_WSL=""
+if [ -n "$WSL_DISTRO_NAME" ]; then
+  IS_WSL=1
+  echo "[提示] 检测到 WSL 环境（$WSL_DISTRO_NAME）"
+fi
+
+# 1) bash 本身（能跑这个脚本就说明有）
+ok "bash 可用（$(bash --version | head -1 | cut -d ' ' -f1-3)）"
+
+# 2) curl：下载与通信都靠它
+if command -v curl >/dev/null 2>&1; then
+  ok "curl 可用（$(curl --version | head -1 | cut -d ' ' -f1-2)）"
+else
+  bad "curl 未安装。Windows 10+ 自带 curl.exe；Git Bash/WSL 内置；或用 PowerShell 下载脚本：Invoke-WebRequest -Uri http://$SERVER/worker.sh -OutFile mac_worker.sh"
+fi
+
+# 3) 当前目录写权限：脚本和下载文件都落这里
+if touch .mac_write_test 2>/dev/null; then
+  rm -f .mac_write_test
+  ok "当前目录可写"
+else
+  bad "当前目录不可写。换到有写权限的目录再跑（如 cd ~ 或项目目录）"
+fi
+
+# 4) python：可选，缺失自动降级，只报不拦
+PY=$(command -v python || command -v python3 || true)
+if [ -n "$PY" ]; then
+  ok "python 可用（$PY）"
+else
+  echo "[提示] 无 python —— 不影响接入，脚本会用内置方式判别任务"
+fi
+
+# 5) 网络连通：真实发一次 MCP 握手
+CODE=$(curl -s --noproxy '*' --max-time 8 -o /dev/null -w '%{http_code}' \
+  -X POST "http://$SERVER/mcp" \
+  -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":0,"method":"ping"}' 2>/dev/null)
+if [ "$CODE" = "200" ]; then
+  ok "主服务可达（http://$SERVER/mcp 握手 200）"
+else
+  bad "主服务不可达（HTTP $CODE）。排查：IP:端口是否对、hub 是否启动、防火墙是否放行 $SERVER"
+fi
+
+echo ""
+if [ $fail -eq 0 ]; then
+  echo "结论：全部通过。推荐一键安装到 ~/.mac-worker（跨会话/跨项目通用，自动记忆配置）："
+  echo "  SERVER=$SERVER bash probe.sh --install NAME=<节点名>"
+  echo "或手动接入："
+  echo "  curl -s --noproxy '*' http://$SERVER/worker.sh -o mac_worker.sh"
+  echo "  NAME=<节点名> DESC=<一句话能力> SERVER=$SERVER bash mac_worker.sh"
+else
+  echo "结论：$fail 项不通过，按上面提示处理后重跑本脚本"
+fi
+
+# 一键安装模式：probe.sh --install AGENT=xxx NAME=yyy [DESC=zzz]
+# 每 agent 一目录：~/.mac-worker/<agent>/worker.sh + node.json（身份持久化）
+if [ "$1" = "--install" ]; then
+  INSTALL_AGENT="default"
+  INSTALL_NAME=""
+  INSTALL_DESC="general worker"
+  for kv in ${@:2}; do
+    case "$kv" in
+      AGENT=*) INSTALL_AGENT="${kv#AGENT=}" ;;
+      NAME=*) INSTALL_NAME="${kv#NAME=}" ;;
+      DESC=*) INSTALL_DESC="${kv#DESC=}" ;;
+    esac
+  done
+  [ -n "$INSTALL_NAME" ] || { echo "[x] 缺少 NAME=节点名"; exit 1; }
+
+  # 安装根解析：与 worker.sh 回退口径对齐——WSL 里优先落到 Windows 用户目录，
+  # 保证 MCP 注册（可能带 host）与 worker 注册（同盘落盘）归到同一台主机
+  INSTALL_ROOT="$HOME/.mac-worker"
+  if [ -n "$IS_WSL" ] && [ -d "/mnt/c/Users" ]; then
+    WUSER=$(cmd.exe /c "echo %USERNAME%" 2>/dev/null | tr -d '\r\n' | tr -d '\r')
+    if [ -n "$WUSER" ] && [ -d "/mnt/c/Users/$WUSER" ]; then
+      echo "[提示] WSL 环境：安装到 Windows 用户目录 /mnt/c/Users/$WUSER/.mac-worker（与 worker.sh 回退口径一致）"
+      INSTALL_ROOT="/mnt/c/Users/$WUSER/.mac-worker"
+    else
+      echo "[x] WSL 里取不到 Windows 用户名（cmd.exe 不可用）。两种选择："
+      echo "    1) 在 Windows 侧 PowerShell/Git Bash 里跑本安装命令（推荐）"
+      echo "    2) 确认要装进 WSL home（$HOME/.mac-worker）的话，加 FORCE_WSL_INSTALL=1 重跑"
+      echo "    注意：装进 WSL home 会导致注册 host 口径与 Windows 侧不一致，同名会判撞名"
+      exit 1
+    fi
+  fi
+  if [ -n "$IS_WSL" ] && [ "$FORCE_WSL_INSTALL" != "1" ] && [ ! -d "/mnt/c/Users" ]; then
+    echo "[x] WSL 环境但 /mnt/c 不可达，拒绝盲装。确认要装 WSL home 用 FORCE_WSL_INSTALL=1"
+    exit 1
+  fi
+  INSTALL_DIR="$INSTALL_ROOT/$INSTALL_AGENT"
+  # 一致性校验：目录已有身份且 agent 类型不符 → 拒绝安装，防装错目录
+  if [ -f "$INSTALL_DIR/node.json" ]; then
+    EXIST_AGENT=$(grep -o '"agent": *"[^"]*"' "$INSTALL_DIR/node.json" 2>/dev/null | cut -d'"' -f4)
+    if [ -n "$EXIST_AGENT" ] && [ "$EXIST_AGENT" != "$INSTALL_AGENT" ]; then
+      echo "[x] 目录 $INSTALL_DIR 已属于 agent「$EXIST_AGENT」，与本次 --install AGENT=$INSTALL_AGENT 不符"
+      echo "    请换正确的 AGENT= 参数，或用其他目录名"
+      exit 1
+    fi
+  fi
+  mkdir -p "$INSTALL_DIR" || { echo "[x] 无法创建 $INSTALL_DIR"; exit 1; }
+  curl -s --noproxy '*' "http://$SERVER/worker.sh" -o "$INSTALL_DIR/worker.sh" || { echo "[x] 下载失败"; exit 1; }
+  chmod +x "$INSTALL_DIR/worker.sh" 2>/dev/null
+  if [ ! -f "$INSTALL_DIR/node.json" ]; then
+    cat > "$INSTALL_DIR/node.json" <<EOF
+{
+  "agent": "$INSTALL_AGENT",
+  "name": "$INSTALL_NAME",
+  "desc": "$INSTALL_DESC",
+  "server": "$SERVER"
+}
+EOF
+  fi
+  echo "[✓] 已安装到 $INSTALL_DIR"
+  echo "启动：bash $INSTALL_DIR/worker.sh（配置已记忆，免参数）"
+  echo "临时换名调试：NAME=xxx bash $INSTALL_DIR/worker.sh"
+  exit 0
+fi
