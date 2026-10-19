@@ -1,0 +1,9 @@
+chore: 移除自造的 supervisor/loop/reconnect 脚本
+
+这些脚本不是 hub 体系的一部分，是我为解决节点掉线临时写的，
+混在仓库里会误导后来者以为它们是官方组件。
+
+- lan-supervisor.sh / lan-loop.sh / lan-exec.ps1：worker 外部守护与循环
+- lan-onboarding/：hub 已提供的 probe.sh / worker.sh 副本
+
+节点保活应由 hub 体系自身机制负责，不引入仓库外的自定义守护。
