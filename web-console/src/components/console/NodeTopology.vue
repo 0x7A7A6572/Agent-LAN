@@ -24,16 +24,23 @@ const W = ref(900)
 const H = ref(520)
 const CENTER = computed(() => ({ x: W.value / 2, y: H.value / 2 }))
 const LEAF_R = computed(() => Math.min(W.value, H.value * 1.35) * 0.31)
+/** 中心圆与叶子圆同尺寸，容器小的时候一起缩，不会一个占满屏一个看不见 */
+const NODE_R = computed(() => Math.max(28, Math.min(52, LEAF_R.value * 0.3)))
+const GLOW_R = computed(() => NODE_R.value * 3.1)
 
 const hostRef = ref<HTMLElement | null>(null)
 let ro: ResizeObserver | undefined
+
+/** 叶子节点自身占的半径（圆圈 + 下方两行文字），布局要避开边缘 */
+const LEAF_PAD = 56
 
 function measure() {
   const el = hostRef.value
   if (!el) return
   const r = el.getBoundingClientRect()
-  if (r.width > 0) W.value = Math.round(r.width)
-  if (r.height > 0) H.value = Math.round(r.height)
+  // 只在拿到有效尺寸时覆盖：0 宽会把所有叶子叠到同一条竖线上
+  if (r.width > LEAF_PAD * 2) W.value = Math.round(r.width)
+  if (r.height > LEAF_PAD * 2) H.value = Math.round(r.height)
 }
 
 onMounted(() => {
@@ -80,8 +87,9 @@ const layout = computed(() => {
   const leaves = props.presences.filter(p => p !== pmNode.value)
   const total = leaves.length
   if (!total) return []
-  const rx = Math.min(W.value * 0.36, LEAF_R.value * 1.55)
-  const ry = Math.min(H.value * 0.34, LEAF_R.value * 1.1)
+  // 半径上限扣掉叶子自身占位，避免圆和文字被画布边缘裁掉
+  const rx = Math.max(60, Math.min(W.value / 2 - LEAF_PAD * 1.6, LEAF_R.value * 1.5))
+  const ry = Math.max(50, Math.min(H.value / 2 - LEAF_PAD * 1.25, LEAF_R.value))
   const perRing = total > 8 ? Math.ceil(total / 2) : total
   return leaves.map((p, i) => {
     const ring = total > 8 && i >= perRing ? 1 : 0
@@ -161,11 +169,11 @@ const links = computed(() =>
 
       <!-- 中心：Supervisor / 人工调度，任何模式都显示，这是拓扑的主角 -->
       <g>
-        <circle v-if="pmActive" :cx="CENTER.x" :cy="CENTER.y" :r="Math.round(LEAF_R * 0.62)" fill="url(#pmGlow)" />
+        <circle v-if="pmActive" :cx="CENTER.x" :cy="CENTER.y" :r="GLOW_R" fill="url(#pmGlow)" />
         <circle
           :cx="CENTER.x"
           :cy="CENTER.y"
-          r="52"
+          :r="NODE_R"
           :class="pmActive ? 'fill-blue-500/10 stroke-blue-500' : mode === 'degraded' ? 'fill-amber-500/10 stroke-amber-500' : 'fill-muted stroke-muted-foreground/40'"
           stroke-width="1.5"
           :stroke-dasharray="pmActive ? '0' : '5 4'"
@@ -193,24 +201,32 @@ const links = computed(() =>
         <circle
           :cx="n.x"
           :cy="n.y"
-          r="30"
+          :r="NODE_R * 0.62"
           :class="[
             'transition-all',
             n.p.waitingFor ? 'fill-amber-500/15 stroke-amber-500' : n.p.state === 'working' && n.p.online ? 'fill-blue-500/15 stroke-blue-500' : n.p.online ? 'fill-card stroke-border' : 'fill-muted/40 stroke-muted-foreground/30',
+            n.p.demo ? 'stroke-dasharray-2 opacity-70' : '',
           ]"
           stroke-width="1.5"
         />
-        <image v-if="logo(n.p.card.name, n.p.agent)" :href="logo(n.p.card.name, n.p.agent)!" :x="n.x - 13" :y="n.y - 13" width="26" height="26" />
+        <image
+          v-if="logo(n.p.card.name, n.p.agent)"
+          :href="logo(n.p.card.name, n.p.agent)!"
+          :x="n.x - NODE_R * 0.27"
+          :y="n.y - NODE_R * 0.27"
+          :width="NODE_R * 0.54"
+          :height="NODE_R * 0.54"
+        />
         <text v-else :x="n.x" :y="n.y + 4" text-anchor="middle" class="fill-foreground text-[11px] font-semibold">
           {{ n.p.card.name.slice(0, 2).toUpperCase() }}
         </text>
         <!-- 状态点 -->
-        <circle :cx="n.x + 22" :cy="n.y - 22" r="5" :class="statusOf(n.p).dot" stroke="white" stroke-width="1.5" />
+        <circle :cx="n.x + NODE_R * 0.45" :cy="n.y - NODE_R * 0.45" r="5" :class="statusOf(n.p).dot" stroke="white" stroke-width="1.5" />
         <!-- 名字与角色 -->
-        <text :x="n.x" :y="n.y + 46" text-anchor="middle" class="fill-foreground text-[11px] font-medium">
+        <text :x="n.x" :y="n.y + NODE_R * 0.62 + 14" text-anchor="middle" class="fill-foreground text-[11px] font-medium">
           {{ n.p.card.name }}
         </text>
-        <text :x="n.x" :y="n.y + 60" text-anchor="middle" class="fill-muted-foreground text-[10px]">
+        <text :x="n.x" :y="n.y + NODE_R * 0.62 + 27" text-anchor="middle" class="fill-muted-foreground text-[10px]">
           {{ n.p.role || '未设角色' }}
         </text>
       </g>
