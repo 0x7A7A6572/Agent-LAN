@@ -134,6 +134,8 @@ EOF
 
 本机已安装常驻 worker，身份节点名 __NAME__，主服务 __SERVER__。
 
+- 重连：bash __DIR__/worker.sh —— 不用任何参数，它自己从 node.json 读回身份。
+  会话任务被关、机器重启后都靠这一条恢复；必须在当前会话里起，同身份只起一个。
 - 接活：起 bash __DIR__/worker.sh。它持续领活，拿到任务或留言就退出并打印 JSON；
   上层拿到 JSON 后先调 mac_report(taskId, state="working", name="__NAME__") 报开工，
   干完报 completed、失败报 failed，然后重新启动脚本进入下一轮。
