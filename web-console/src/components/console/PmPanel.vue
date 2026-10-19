@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { Bot, CircleAlert, Play, Square, TriangleAlert, Zap } from 'lucide-vue-next'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Label } from '@/components/ui/label'
+import { ChevronLeft, ChevronRight, Search } from 'lucide-vue-next'
 import {
   fetchPmConfig,
   fetchPmDecisions,
@@ -48,6 +49,13 @@ const wbLoading = ref(false)
 const wbError = ref('')
 const busy = ref(false)
 const msg = ref('')
+// 决策流：自动刷新 / 搜索 / 分页
+const decisionsLoading = ref(false)
+let decisionsTimer: ReturnType<typeof setInterval> | undefined
+const DECISIONS_PAGE_SIZE = 10
+const page = ref(1)
+const pageSize = ref(10)
+const search = ref('')
 /** 提示消息的严重程度：失败要显眼，别被当成切换成功 */
 const msgKind = ref<'ok' | 'error'>('ok')
 
@@ -55,10 +63,19 @@ const mode = computed(() => store.pmState.mode)
 const active = computed(() => mode.value === 'pm')
 const degraded = computed(() => mode.value === 'degraded')
 
+async function loadDecisions() {
+  decisionsLoading.value = true
+  try {
+    decisions.value = (await fetchPmDecisions(200)).decisions ?? []
+  } finally {
+    decisionsLoading.value = false
+  }
+}
+
 async function load() {
   const c = await fetchPmConfig()
   if (c) { config.value = c; loaded.value = true }
-  decisions.value = (await fetchPmDecisions(20)).decisions ?? []
+  await loadDecisions()
   wb.value = await fetchPmWorkbuddy()
 }
 
@@ -134,7 +151,35 @@ function fmtTime(ms: number) {
   return new Date(ms).toLocaleTimeString('zh-CN', { hour12: false })
 }
 
-onMounted(load)
+// 搜索过滤：匹配推理、错误、驳回原因与事件数
+const filtered = computed(() => {
+  const q = search.value.trim().toLowerCase()
+  if (!q) return decisions.value
+  return decisions.value.filter(d =>
+    (d.reasoning ?? '').toLowerCase().includes(q) ||
+    (d.error ?? '').toLowerCase().includes(q) ||
+    d.rejected?.some(r => r.reason.toLowerCase().includes(q)) ||
+    String(d.eventCount) === q,
+  )
+})
+
+const pageCount = computed(() => Math.max(1, Math.ceil(filtered.value.length / pageSize.value)))
+const paged = computed(() => {
+  const start = (page.value - 1) * pageSize.value
+  return filtered.value.slice(start, start + pageSize.value)
+})
+
+// 搜索词或总数变化时把页码夹回有效范围
+watch([search, () => filtered.value.length], () => { if (page.value > pageCount.value) page.value = pageCount.value })
+
+// 打开页面即开始自动刷新：决策是后台发生的，不刷就看不见
+onMounted(() => {
+  load()
+  decisionsTimer = setInterval(loadDecisions, 5000)
+})
+onUnmounted(() => {
+  if (decisionsTimer) clearInterval(decisionsTimer)
+})
 defineExpose({ reload: load })
 </script>
 
@@ -277,14 +322,24 @@ defineExpose({ reload: load })
       <CardHeader>
         <div class="flex items-center gap-2">
           <CardTitle class="text-sm">决策流</CardTitle>
-          <Badge variant="outline" class="ml-auto text-[10px]">{{ decisions.length }}</Badge>
-          <Button size="sm" variant="ghost" class="h-7" @click="load">刷新</Button>
+          <div class="ml-auto flex items-center gap-2">
+            <span v-if="decisionsLoading" class="text-[10px] text-muted-foreground">刷新中…</span>
+            <span v-else class="flex items-center gap-1 text-[10px] text-muted-foreground">
+              <i class="size-1.5 animate-pulse rounded-full bg-emerald-500" />5s 自动刷新
+            </span>
+            <Badge variant="outline" class="text-[10px]">{{ filtered.length }}</Badge>
+          </div>
         </div>
         <CardDescription>每次事件批处理的推理、动作与驳回原因</CardDescription>
       </CardHeader>
       <CardContent class="flex flex-col gap-2">
+        <!-- 搜索：推理 / 错误 / 驳回原因 / 事件数 -->
+        <div class="relative">
+          <Search class="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Input v-model="search" class="h-8 pl-8 text-xs" placeholder="搜索决策…" />
+        </div>
         <div
-          v-for="(d, i) in decisions"
+          v-for="(d, i) in paged"
           :key="d.at + '-' + i"
           class="rounded-md border p-2.5 text-xs"
           :class="d.error ? 'border-amber-500/50 bg-amber-500/5' : ''"
@@ -305,9 +360,37 @@ defineExpose({ reload: load })
             </li>
           </ul>
         </div>
-        <p v-if="!decisions.length" class="py-6 text-center text-muted-foreground">
-          还没有决策记录。开启 PM 接管后，事件批次会在这里留下推理与执行结果。
+        <p v-if="!filtered.length" class="py-6 text-center text-muted-foreground">
+          {{ search ? '没有匹配的决策记录' : '还没有决策记录。开启 PM 接管后，事件批次会在这里留下推理与执行结果。' }}
         </p>
+
+        <!-- 分页条 -->
+        <div
+          v-if="filtered.length"
+          class="flex flex-wrap items-center justify-between gap-2 border-t pt-2 text-xs text-muted-foreground"
+        >
+          <span>共 {{ filtered.length }} 条 · 第 {{ page }} / {{ pageCount }} 页</span>
+          <div class="flex items-center gap-2">
+            <Select v-model="pageSize">
+              <SelectTrigger class="h-7 w-[100px] text-xs" aria-label="每页条数">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem :value="10">每页 10 条</SelectItem>
+                <SelectItem :value="20">每页 20 条</SelectItem>
+                <SelectItem :value="50">每页 50 条</SelectItem>
+              </SelectContent>
+            </Select>
+            <Button variant="outline" size="sm" class="h-7 px-2" :disabled="page <= 1" @click="page--">
+              <ChevronLeft class="h-4 w-4" />
+              上一页
+            </Button>
+            <Button variant="outline" size="sm" class="h-7 px-2" :disabled="page >= pageCount" @click="page++">
+              下一页
+              <ChevronRight class="h-4 w-4" />
+            </Button>
+          </div>
+        </div>
       </CardContent>
     </Card>
   </div>
