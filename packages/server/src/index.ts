@@ -3,6 +3,7 @@ import http from "node:http";
 import { createHash, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AgentAdapter, AgentCard, Task, TaskState, InvokeEvent, AgentPresence } from "@mac/sdk";
@@ -132,6 +133,27 @@ export function createServer(options: ServerOptions): http.Server {
     const mail = mailboxes.get(name);
     mailboxes.delete(name);
     return mail ?? [];
+  }
+
+  // ── 「正在处理」可见性 ────────────────────────────────────────────────
+  // 控制台的执行中态原来只由「任务投递 / report(working)」驱动，于是：
+  //   留言送达 → worker 消费后即退出 → 没有任何置执行态的时机 → 控制台一直显示「空闲」
+  // 这里把三类来源统一成执行态：task（投递驱动）、message（送达驱动）、agent（节点自报，如人工接管）。
+  const MSG_BUSY_TTL_MS = 10 * 60 * 1000;   // 留言消化兜底；节点下一次领活即提前清除
+  const AGENT_BUSY_TTL_MS = 15 * 60 * 1000; // 节点主动上报兜底；显式 idle 可提前清除
+
+  /** 留言送达即置执行中（留言没有任务生命周期，不置位控制台就看不见） */
+  function markMailBusy(name: string, mail: { text?: string; from?: string }[]): void {
+    if (!mail.length) return;
+    const first = String(mail[0]?.text ?? "").replace(/\s+/g, " ").trim();
+    const more = mail.length > 1 ? "等 " + mail.length + " 条" : "";
+    const preview = first.length > 24 ? first.slice(0, 24) + "…" : first;
+    registry.setBusy(name, true, "处理留言" + more + "：" + (preview || "(空)"), "message", MSG_BUSY_TTL_MS);
+  }
+
+  /** 节点重新领活 = 上一条留言已消化完，清掉留言执行态（任务态与主动上报态不动） */
+  function clearMailBusyOnPull(name: string): void {
+    if (registry.busyKindOf(name) === "message") registry.setBusy(name, false);
   }
 
   /** 投递确认送达：清 in-flight 标志，此后不再被当作丢失回收 */
@@ -398,6 +420,31 @@ export function createServer(options: ServerOptions): http.Server {
     ?? path.join(path.resolve(options.filesDir ?? ".mac-files"), "..", ".orders.json"));
   const roleStore = new RoleStore(options.rolesPath
     ?? path.join(path.resolve(options.filesDir ?? ".mac-files"), "..", ".roles.json"));
+  // 角色回写：控制台改角色后同步写进该节点本地的 node.json。
+  // 仅同机有效——hub 不知道远端节点安装目录，跨机器由节点自己同步。
+  // node.json 是 worker.sh 的身份文件，写坏会导致节点起不来，故一律尽力而为。
+  function writeRoleToNodeJson(nodeName: string, role: string): void {
+    const agent = registry.find(nodeName)?.agent;
+    if (!agent) {
+      log("[role] " + nodeName + " 缺 agent 类型，跳过 node.json 回写");
+      return;
+    }
+    const file = path.join(os.homedir(), ".mac-worker", agent, "node.json");
+    try {
+      if (!fs.existsSync(file)) {
+        log("[role] " + file + " 不存在（非同机节点），跳过回写");
+        return;
+      }
+      const raw = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, unknown>;
+      if (role) raw.role = role;
+      else delete raw.role;
+      fs.writeFileSync(file, JSON.stringify(raw, null, 2) + "\n");
+      log("[role] 已写回 " + nodeName + " 的 node.json（role=" + (role || "（无）") + "）");
+    } catch (err: any) {
+      log("[role] 写 node.json 失败 " + nodeName + ": " + String(err?.message ?? err));
+    }
+  }
+
   // 领任务时给名册生成「正在做」摘要：优先工单号反查标题，普通任务截 prompt
   const workingOnOf = (task: Task): string => {
     const m = /\[工单 (ord-\w+)\]/.exec(task.prompt);
@@ -668,9 +715,14 @@ export function createServer(options: ServerOptions): http.Server {
         return;
       }
       const timeoutMs = Math.min(Number(url.searchParams.get("timeout")) || PULL_TIMEOUT_MS, 55000);
+      clearMailBusyOnPull(name);
       const task = await pullTask(name, timeoutMs);
+      const messages = dropMail(name);
+      // 留言不走任务生命周期：送达即置执行中，否则控制台看不到「正在处理」
+      if (!task) markMailBusy(name, messages);
+      if (messages.length) pushPresence();
       res.writeHead(200, { "content-type": "application/json", connection: "close" });
-      res.end(JSON.stringify({ task, messages: dropMail(name) }));
+      res.end(JSON.stringify({ task, messages }));
       return;
     }
     // 节点轮询任务状态：发现 canceled 即中止本地执行
@@ -834,6 +886,8 @@ export function createServer(options: ServerOptions): http.Server {
       const { name, role } = JSON.parse(body);
       try {
         roleStore.set(String(name), String(role ?? ""));
+        // 同步写回节点本地 node.json，让节点自己也知道角色（重连后仍生效）
+        writeRoleToNodeJson(String(name), String(role ?? ""));
         log("[role] " + name + " -> " + (role || "（无）"));
         res.writeHead(200, { "content-type": "application/json", connection: "close" });
         res.end(JSON.stringify({ ok: true, role: roleStore.get(String(name)) }));
@@ -1020,8 +1074,17 @@ export function createServer(options: ServerOptions): http.Server {
 
   // MCP 门面绑线：把 server 内部能力以工具形式暴露
 const mcpDeps: McpFacadeDeps = {
-  checkIn: (card, sourceIp) => {
+  checkIn: (card, sourceIp, state, workingOn) => {
     const r = registry.heartbeat(card, null, sourceIp);
+    // 节点主动上报执行态：心跳不带 state 时一律不改动现有态（伴生心跳不能把执行中打回空闲）。
+    // 用于「人工接管 / 会话内自行开工」这类没有任务投递的干活场景。
+    if (state === "working") {
+      registry.setBusy(card.name, true, workingOn && String(workingOn).trim() ? String(workingOn).trim() : "主动接管中", "agent", AGENT_BUSY_TTL_MS);
+      pushPresence();
+    } else if (state === "idle" && registry.busyKindOf(card.name) !== "task") {
+      registry.setBusy(card.name, false);
+      pushPresence();
+    }
     return {
       ok: !r.conflict,
       conflictHost: r.conflict,
@@ -1031,8 +1094,12 @@ const mcpDeps: McpFacadeDeps = {
     };
   },
   pullTask: async (name, ms) => {
+    clearMailBusyOnPull(name);
     const task = await pullTask(name, ms);
     const mail = dropMail(name);
+    // 与 HTTP /agent/pull 保持一致：留言送达即置执行中
+    if (!task) markMailBusy(name, mail);
+    if (mail.length) pushPresence();
     return { task, messages: mail };
   },
   onDeliveryFailed: (taskId, name) => redeliverTask(taskId, name),

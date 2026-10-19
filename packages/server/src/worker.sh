@@ -41,12 +41,14 @@ if [ -n "$MAC_ROOT" ] && [ -f "$MAC_DIR/node.json" ]; then
     [ -n "$JA" ] && [ "$JA" != "$AGENT" ] && log "[!] 警告：目录名 $AGENT 与 node.json 记录的 agent「$JA」不一致，建议重新 probe.sh --install 归位"
   fi
   # node.json 持久身份：同 agent 任何会话裸启动不丢
-    eval "$(sed -n 's/.*"\(name\|desc\|server\|agent\)": *"\([^"]*\)".*/J_\1='"'"'\2'"'"'/p' "$MAC_DIR/node.json" 2>/dev/null)" 2>/dev/null
+    eval "$(sed -n 's/.*"\(name\|desc\|server\|agent\|role\)": *"\([^"]*\)".*/J_\1='"'"'\2'"'"'/p' "$MAC_DIR/node.json" 2>/dev/null)" 2>/dev/null
 fi
 
 NAME=${NAME:-${J_name:-worker-$(hostname)}}
 DESC=${DESC:-${J_desc:-general worker}}
 SERVER=${SERVER:-${J_server:-}}
+# 角色由控制台设定后写回 node.json，节点启动时据此知道自己岗位
+ROLE=${ROLE:-${J_role:-}}
 if [ -z "$SERVER" ]; then
   echo "[x] 缺少 SERVER。首次安装：SERVER=<主服务IP:端口> bash probe.sh --install AGENT=<agent名> NAME=<节点名>" >&2
   echo "    或手动：SERVER=<主服务IP:端口> AGENT=<agent名> NAME=<节点名> bash worker.sh" >&2
@@ -56,14 +58,18 @@ fi
 save_env() {
   [ -n "$MAC_ROOT" ] || return 0
   mkdir -p "$MAC_DIR"
-  cat > "$MAC_DIR/node.json" <<EOF
-{
-  "agent": "$AGENT",
-  "name": "$NAME",
-  "desc": "$DESC",
-  "server": "$SERVER"
-}
-EOF
+  # role 由控制台写入、节点只读回传：这里重写身份时不能把它冲掉，
+  # 否则每次重新注册都会丢一次角色。
+  local keep_role=""
+  [ -f "$MAC_DIR/node.json" ] && keep_role=$(grep -o '"role": *"[^"]*"' "$MAC_DIR/node.json" 2>/dev/null | cut -d'"' -f4)
+  # 先拼主体，再按需追加 role 行：heredoc 里做条件插入容易被吃掉引号
+  local body
+  body=$(printf '{\n  "agent": "%s",\n  "name": "%s",\n  "desc": "%s",\n  "server": "%s"' \
+    "$AGENT" "$NAME" "$DESC" "$SERVER")
+  if [ -n "$keep_role" ]; then
+    body="$body,"$'\n'"  \"role\": \"$keep_role\""
+  fi
+  printf '%s\n}\n' "$body" > "$MAC_DIR/node.json"
 }
 WAIT_MS=${WAIT_MS:-6000}
 MAX=${MAX:-100000}
