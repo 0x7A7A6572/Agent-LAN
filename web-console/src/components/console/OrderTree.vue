@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ChevronDown, ChevronRight, Ellipsis, GripVertical, User } from 'lucide-vue-next'
+import { ChevronDown, ChevronRight, Ellipsis, GripVertical } from 'lucide-vue-next'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -17,12 +17,19 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import type { Order, OrderStatus } from '@/types/console'
+import NodeBadge from './NodeBadge.vue'
+import type { Order, OrderStatus, Presence } from '@/types/console'
 
 const props = defineProps<{
   orders: Order[]
   allOrders: Order[]
+  /** 名册：处理人列据此显示角色与实时状态，找不到则只显示名字 */
+  presences: Presence[]
 }>()
+
+/** 按名字查名册；已删除的节点返回 undefined，由 NodeBadge 显示为未知 */
+const presenceOf = (name?: string) =>
+  name ? props.presences.find(p => p.card.name === name) : undefined
 const emit = defineEmits<{
   (e: 'select', id: string): void
   (e: 'status-change', id: string, status: OrderStatus): void
@@ -52,7 +59,7 @@ function toggle(id: string) {
         <TableHead>标题</TableHead>
         <TableHead class="w-[110px]">工单类型</TableHead>
         <TableHead class="w-[120px]">状态</TableHead>
-        <TableHead class="w-[140px]">处理人 / 截止</TableHead>
+        <TableHead class="w-[190px]">处理人 / 截止</TableHead>
         <TableHead class="w-12" />
       </TableRow>
     </TableHeader>
@@ -91,11 +98,10 @@ function toggle(id: string) {
             </span>
           </TableCell>
           <TableCell>
-            <span class="flex items-center gap-1.5 text-sm text-muted-foreground">
-              <User class="h-3.5 w-3.5" />
-              {{ order.assignee ?? '未指派' }}
-              <span class="text-xs">· {{ order.dueDate || '—' }}</span>
-            </span>
+            <div class="flex w-[170px] flex-col gap-0.5">
+              <NodeBadge :presence="presenceOf(order.assignee)" :fallback-name="order.assignee || '未指派'" compact />
+              <span class="text-[10px] text-muted-foreground">{{ order.dueDate || '—' }}</span>
+            </div>
           </TableCell>
           <TableCell>
             <DropdownMenu>
@@ -143,10 +149,9 @@ function toggle(id: string) {
             </span>
           </TableCell>
           <TableCell>
-            <span class="flex items-center gap-1.5 text-sm text-muted-foreground">
-              <User class="h-3.5 w-3.5" />
-              {{ child.assignee ?? '未指派' }}
-            </span>
+            <div class="w-[170px]">
+              <NodeBadge :presence="presenceOf(child.assignee)" :fallback-name="child.assignee || '未指派'" compact />
+            </div>
           </TableCell>
           <TableCell>
             <DropdownMenu>

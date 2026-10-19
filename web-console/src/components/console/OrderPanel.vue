@@ -95,6 +95,7 @@ defineExpose({ showDetail })
         v-model:expanded="expanded"
         :orders="pagedRoots"
         :all-orders="allOrders"
+        :presences="presences"
         @select="showDetail"
         @status-change="(id, s) => emit('status-change', id, s)"
         @create-child="o => (childParent = { id: o.id, title: o.title }, createOpen = true)"
