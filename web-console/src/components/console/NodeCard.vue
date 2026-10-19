@@ -29,6 +29,8 @@ const logo = computed(() => logoOf(props.presence.card.name, props.presence.agen
 const working = computed(() => props.presence.online && props.presence.state === 'working')
 // 等待人工确认：优先于执行中显示，是需要人介入的信号
 const waiting = computed(() => props.presence.waitingFor || '')
+// 只有心跳、没有长轮询：节点看着在线但收不到任务（worker.sh 已退出，只剩伴生心跳）
+const staleOnly = computed(() => props.presence.online && !props.presence.mcpActive && !props.presence.state)
 const time = computed(() => new Date(props.presence.lastSeen).toLocaleTimeString('zh-CN', { hour12: false }))
 // 设备分组：服务端算好的 groupHost（卡片 host > 来源 IP > url 兜底）
 const group = computed(() => props.presence.groupHost || props.presence.card.host || props.presence.card.url)
@@ -87,14 +89,14 @@ async function send() {
         <Badge
           variant="outline"
           class="ml-auto gap-1.5 line-clamp-1"
-          :class="waiting ? 'border-amber-500/70 text-amber-600' : working ? 'border-blue-500/60 text-blue-500' : ''"
-          :title="waiting ? '等待人工确认：' + waiting : working ? '执行中' : presence.online ? (presence.mcpActive ? '在线' : '在线·仅心跳') : '离线'"
+          :class="waiting ? 'border-amber-500/70 text-amber-600' : working ? 'border-blue-500/60 text-blue-500' : staleOnly ? 'border-orange-500/70 text-orange-600' : ''"
+          :title="waiting ? '等待人工确认：' + waiting : working ? '执行中' : staleOnly ? '只有心跳、没有长轮询：看着在线但收不到任务，需重启 worker.sh' : presence.online ? '在线' : '离线'"
         >
           <span
             class="size-1.5 rounded-full"
-            :class="waiting ? 'animate-pulse bg-amber-500' : working ? 'animate-pulse bg-blue-500' : presence.online ? (presence.mcpActive ? 'bg-green-500' : 'bg-yellow-500') : 'bg-muted-foreground/40'"
+            :class="waiting ? 'animate-pulse bg-amber-500' : working ? 'animate-pulse bg-blue-500' : staleOnly ? 'bg-orange-500' : presence.online ? 'bg-green-500' : 'bg-muted-foreground/40'"
           />
-          {{ waiting ? '等人工' : working ? '执行中' : presence.online ? (presence.mcpActive ? '在线' : '心跳') : '离线' }}
+          {{ waiting ? '等人工' : working ? '执行中' : staleOnly ? '仅心跳·不领活' : presence.online ? '在线' : '离线' }}
         </Badge>
       </div>
       <button
