@@ -10,6 +10,7 @@ export interface PmRunnerDeps {
   config: () => PmConfig;
   memory: () => PmMemory;
   policy: () => string;
+  flows: () => string;
   /** 未完成工单快照 */
   openOrders: () => Order[];
   /** 在线节点快照 */
@@ -18,7 +19,7 @@ export interface PmRunnerDeps {
   assign: (orderId: string, assignee: string, note: string, by: string) => void;
   updateStatus: (orderId: string, status: string, note: string, by: string) => void;
   sendMessage: (to: string, text: string) => void;
-  dispatch: (orderId: string, assignee: string, by: string) => void;
+  dispatch: (orderId: string, assignee: string, by: string, note?: string) => void;
   log: (line: string) => void;
   /** 自定义模型调用器：workbuddy 直连时注入，绕开 HTTP 端点 */
   customCall?: (body: unknown, timeoutMs: number) => Promise<{ text: string } | { error: string }>;
@@ -52,7 +53,8 @@ export async function runDecision(
       })),
       nodes: deps.nodes(),
       memory,
-      policy: deps.policy()
+      policy: deps.policy(),
+      flows: deps.flows()
     },
     cfg.tokenBudget
   );
@@ -154,7 +156,7 @@ function applyActions(
           if (g) { rejected.push({ action, reason: g }); break; }
           if (!action.note?.trim()) { rejected.push({ action, reason: "改指派必须写 note" }); break; }
           deps.assign(action.orderId, action.assignee, action.note, PM_NAME);
-          deps.dispatch(action.orderId, action.assignee, PM_NAME);
+          deps.dispatch(action.orderId, action.assignee, PM_NAME, action.note);
           touched.set(action.orderId, (touched.get(action.orderId) ?? 0) + 1);
           applied++;
           deps.log("[pm] 派单 " + action.orderId + " -> " + action.assignee);

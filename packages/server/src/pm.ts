@@ -129,6 +129,8 @@ export const PM_IRON_RULES = [
   "依赖未完成的工单不能离开 backlog",
   "工单状态只能向前推进，不能回退到已完成的更早阶段",
   "变更 assignee 必须在 note 中说明原因",
+  "assign 的 note 必须写清本次由他做什么、产物落到哪个目录、交付给哪个节点；节点看不到协作流程，不写它就无从知道",
+  "协作流程有变更时以 ## 协作流程 为准，随时可能调整，不要沿用旧单的做法",
   "单次决策最多产出 " + PM_CONFIG_DEFAULTS.maxActionsPerDecision + " 个动作",
   "同一工单 10 分钟内不被修改超过 3 次",
   "没有需要做的事时返回 noop，不要为了显得忙碌而动作"
@@ -139,7 +141,10 @@ export interface PromptInput {
   orders: unknown[];
   nodes: unknown[];
   memory: PmMemory;
+  /** PM 私有调度判据，不外发 */
   policy: string;
+  /** 可转述给节点的协作流程：谁做什么、目录、交付链 */
+  flows: string;
 }
 
 /** 组装决策输入；超预算时按优先级裁剪订单快照 */
@@ -165,7 +170,8 @@ export function buildPrompt(input: PromptInput, budget: number): { system: strin
   ].join("\n");
 
   const parts: string[] = [];
-  if (input.policy) parts.push("## 当前策略\n" + input.policy);
+  if (input.policy) parts.push("## 当前策略（内部调度判据，不要原样外发）\n" + input.policy);
+  if (input.flows) parts.push("## 协作流程（节点看不到这份内容，必须由你在 assign 的 note 里转述）\n" + input.flows);
 
   const evLines = input.events.map(e => "- [" + e.kind + "] " + JSON.stringify(e.data));
   parts.push("## 本次触发事件（" + input.events.length + " 条）\n" + evLines.join("\n"));
@@ -318,11 +324,15 @@ export async function callPm(
   }
 }
 
-/** 配置/记忆文件路径：与工单同目录，env 可覆盖 */
-export function pmPaths(dataDir: string): { config: string; memory: string; policy: string } {
+/**
+ * 配置/记忆文件路径：与工单同目录，env 可覆盖。
+ * policy 是 PM 私有判据，flows 是可转述给节点的协作流程，两者分文件避免混为一谈。
+ */
+export function pmPaths(dataDir: string): { config: string; memory: string; policy: string; flows: string } {
   return {
     config: process.env.MAC_PM_CONFIG ?? path.join(dataDir, ".pm-config.json"),
     memory: process.env.MAC_PM_MEMORY ?? path.join(dataDir, ".pm-memory.json"),
-    policy: process.env.MAC_PM_POLICY ?? path.join(dataDir, ".pm-policy.md")
+    policy: process.env.MAC_PM_POLICY ?? path.join(dataDir, ".pm-policy.md"),
+    flows: process.env.MAC_FLOWS ?? path.join(dataDir, ".flows.md")
   };
 }

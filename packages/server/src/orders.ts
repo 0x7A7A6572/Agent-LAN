@@ -63,7 +63,9 @@ export class OrderStore {
       attachments: [],
       parent: input.parent,
       blockedBy: input.blockedBy ?? [],
-      timeline: [{ at: now, by, field: "created", to: input.status ?? "backlog" }]
+      timeline: [{ at: now, by, field: "created", to: input.status ?? "backlog" }],
+      // 建单即成边：来源是建单人，落点是首次指派人
+      handoffs: input.assignee ? [{ at: now, from: by, to: input.assignee, by }] : []
     };
     this.orders.set(order.id, order);
     this.save();
@@ -139,6 +141,12 @@ export class OrderStore {
     track("blockedBy", patch.blockedBy ?? o.blockedBy);
     if (patch.note) {
       events.push({ at: now, by, field: "note", to: patch.note });
+    }
+    // assignee 变化才算一次换手；同一次 update 内先记边再落 timeline
+    const handoff = events.find(e => e.field === "assignee");
+    if (handoff && handoff.to && handoff.to !== "undefined") {
+      if (!o.handoffs) o.handoffs = [];
+      o.handoffs.push({ at: now, from: handoff.from || undefined, to: handoff.to, by });
     }
     if (events.length) {
       o.updatedAt = now;
