@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import * as api from '@/api/console'
-import type { Order, OrderAttachment, OrderStatus, PmState, Presence } from '@/types/console'
+import type { Order, OrderAttachment, OrderStatus, PmState, Presence, RoleDef } from '@/types/console'
 
 export const useConsoleStore = defineStore('console', () => {
   // 名册：SSE 全量推送，直接整表替换
@@ -17,7 +17,7 @@ export const useConsoleStore = defineStore('console', () => {
   const logs = ref<string[]>([])
 
   // 角色库
-  const roles = ref<string[]>([])
+  const roles = ref<RoleDef[]>([])
 
   // 工单
   const orders = ref<Order[]>([])

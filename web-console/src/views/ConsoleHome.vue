@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { ChevronRight, FolderOpen, Network, ScrollText, Plus, SlidersHorizontal, Ticket, UserCog, TriangleAlert, X } from 'lucide-vue-next'
+import { ChevronRight, FolderOpen, Network, ScrollText, Plus, SlidersHorizontal, Ticket, TriangleAlert, X } from 'lucide-vue-next'
 import { useConsoleStore } from '@/stores/console'
 import { setNodeRole, saveRoles } from '@/api/console'
 import CreateOrderDialog from '@/components/console/CreateOrderDialog.vue'
@@ -12,20 +12,19 @@ import FloatingTabs from '@/components/console/FloatingTabs.vue'
 import type { FloatingTab } from '@/components/console/floating-tabs'
 import OrderPanel from '@/components/console/OrderPanel.vue'
 import LogPanel from '@/components/console/LogPanel.vue'
-import RolesDialog from '@/components/console/RolesDialog.vue'
+import RoleLibrary from '@/components/console/RoleLibrary.vue'
 import RolePickDialog from '@/components/console/RolePickDialog.vue'
 import FilesDialog from '@/components/console/FilesDialog.vue'
 import InstallPanel from '@/components/console/InstallPanel.vue'
 import { Badge } from '@/components/ui/badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import type { Order, OrderAttachment, OrderStatus } from '@/types/console'
 
 const store = useConsoleStore()
 
-const rolesOpen = ref(false)
 const filesOpen = ref(false)
 const pickOpen = ref(false)
 const pickName = ref('')
@@ -91,7 +90,10 @@ async function onPickConfirm(role: string) {
   else log('[role] 修改失败: ' + r.error)
 }
 
-async function onRolesSave(roles: string[]) {
+async function onRolesSave(names: string[]) {
+  // 角色库只改名字时保留原职责说明，避免编辑一次就把 desc 清空
+  const prev = new Map(store.roles.map(x => [x.name, x.desc]))
+  const roles = names.map(n => ({ name: n, desc: prev.get(n) ?? '' }))
   const r = await saveRoles(roles)
   if (r.ok) {
     await store.refreshRoles()
@@ -274,14 +276,13 @@ function openRedispatch(order: Order) {
         <div v-show="view === 'settings'" class="grid gap-4 lg:grid-cols-[minmax(0,1fr)_24rem]">
           <PmPanel />
           <div class="flex flex-col gap-4">
-            <Card>
-              <CardHeader>
-                <CardTitle class="text-sm">其他</CardTitle>
-              </CardHeader>
-              <CardContent class="flex flex-col gap-2">
-                <Button variant="outline" size="sm" class="justify-start" @click="rolesOpen = true">
-                  <UserCog class="h-4 w-4" />角色库
-                </Button>
+            <Card id="sec-roles-card">
+              <CardContent class="p-3">
+                <RoleLibrary
+                  :roles="store.roles"
+                  :nodes="store.presences.map(p => ({ name: p.card.name, role: p.role, online: p.online }))"
+                  @save="onRolesSave"
+                />
               </CardContent>
             </Card>
             <Card>
@@ -294,7 +295,6 @@ function openRedispatch(order: Order) {
       </main>
 
       <FloatingTabs v-model="view" :tabs="tabs" />
-    <RolesDialog v-model:open="rolesOpen" :roles="store.roles.map(r => r.name)" @save="onRolesSave" />
     <CreateOrderDialog
       v-model:open="sidebarCreateOpen"
       :presences="store.presences"

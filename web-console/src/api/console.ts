@@ -1,4 +1,4 @@
-import type { FileInfo, Order, OrderAttachment, OrderDetail, PmConfigView, PmDecisionView, PmState, Presence } from '@/types/console'
+import type { FileInfo, Order, OrderAttachment, OrderDetail, PmConfigView, PmDecisionView, PmState, Presence, RoleDef } from '@/types/console'
 import { rpc } from './rpc'
 
 async function getJson<T>(url: string): Promise<T> {
@@ -13,9 +13,13 @@ export const fetchLogs = () => getJson<{ logs: string[] }>('/console/logs').catc
 
 export const clearLogs = () => fetch('/console/logs/clear', { method: 'POST' })
 
-export const fetchRoles = () => getJson<{ allowed?: string[] }>('/console/roles').then(d => d.allowed ?? [])
+// 旧服务端只回字符串数组，这里统一成 { name, desc }
+export const fetchRoles = () =>
+  getJson<{ allowed?: (string | RoleDef)[] }>('/console/roles').then(d =>
+    (d.allowed ?? []).map(r => (typeof r === 'string' ? { name: r, desc: '' } : { name: r.name, desc: r.desc ?? '' })),
+  )
 
-export const saveRoles = (roles: string[]) =>
+export const saveRoles = (roles: RoleDef[]) =>
   fetch('/console/roles/allowed', {
     method: 'PUT',
     headers: { 'content-type': 'application/json' },
@@ -61,6 +65,26 @@ export const setPmMode = (mode: 'human' | 'pm') =>
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ mode }),
   }).then(r => r.json() as Promise<{ ok: boolean; mode?: string; error?: string }>)
+
+export const fetchPmPolicy = () =>
+  getJson<{ policy: string }>('/console/pm/policy').catch(() => ({ policy: '' }))
+
+export const savePmPolicy = (policy: string) =>
+  fetch('/console/pm/policy', {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ policy }),
+  }).then(r => r.json() as Promise<{ ok: boolean; error?: string }>)
+
+export const fetchPmFlows = () =>
+  getJson<{ flows: string }>('/console/pm/flows').catch(() => ({ flows: '' }))
+
+export const savePmFlows = (flows: string) =>
+  fetch('/console/pm/flows', {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ flows }),
+  }).then(r => r.json() as Promise<{ ok: boolean; error?: string }>)
 
 export const fetchPmDecisions = (limit = 20) =>
   getJson<{ decisions?: PmDecisionView[] }>('/console/pm/decisions?limit=' + limit).catch(() => ({ decisions: [] }))

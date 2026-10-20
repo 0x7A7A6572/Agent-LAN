@@ -10,11 +10,19 @@ export interface AgentCard {
 
 export type NodeState = 'idle' | 'working' | string
 
+/** 角色库条目：名字是节点指派的依据，desc 是给人看的一句话职责 */
+export interface RoleDef {
+  name: string
+  desc?: string
+}
+
 export interface Presence {
   card: AgentCard
   online: boolean
   state?: NodeState
   role?: string
+  /** 角色职责说明，服务端按角色库补全 */
+  roleDesc?: string
   /** 待处理留言摘要；只展示，不代表节点在忙 */
   pendingMail?: string
   workingOn?: string
@@ -27,7 +35,7 @@ export interface Presence {
   queuedCount?: number
 }
 
-/** 派发权状态：human 人工模式 / pm PM 接管 / degraded PM 超时已放行 */
+/** 派发权状态：human 人工模式 / pm PM 接管 */
 export type DispatchMode = 'human' | 'pm' | 'degraded'
 
 export interface PmState {
@@ -39,6 +47,8 @@ export interface PmState {
   model?: string
   baseUrl?: string
   apiKeyConfigured?: boolean
+  /** PM 连续决策失败次数；只做提示，不影响派发权 */
+  failStreak?: number
 }
 
 export interface PmConfigView {
@@ -101,6 +111,14 @@ export interface FileInfo {
   uri: string
 }
 
+/** 派发边：from 把工单交给 to，from 为空表示首次派发 */
+export interface OrderHandoff {
+  at: string
+  from?: string
+  to: string
+  by: string
+}
+
 export interface Order {
   id: string
   title: string
@@ -114,6 +132,7 @@ export interface Order {
   parent?: string
   timeline: OrderTimelineEvent[]
   attachments: OrderAttachment[]
+  handoffs?: OrderHandoff[]
 }
 
 export interface OrderDetail {
