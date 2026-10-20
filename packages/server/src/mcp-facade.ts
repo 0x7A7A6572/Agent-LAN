@@ -45,7 +45,7 @@ export interface McpFacadeDeps {
   /** 取消工单：终止任务并回收待领 */
   orderCancel: (id: string, by: string) => { ok: boolean; canceled: string[]; error?: string };
   /** 重新派发工单：可换 assignee */
-  orderRedispatch: (id: string, assignee: string | undefined, by: string) => { ok: boolean; taskId?: string; error?: string };
+  orderRedispatch: (id: string, assignee: string | undefined, by: string, coordination?: string) => { ok: boolean; taskId?: string; error?: string };
   /** 节点规范全文（agent-onboarding 同源） */
   getGuide: () => string;
   log: (line: string, level?: "info" | "debug") => void;
@@ -193,6 +193,7 @@ const TOOLS = [
         dueDate: { type: "string" },
         parent: { type: "string", description: "母单 id" },
         blockedBy: { type: "array", items: { type: "string" }, description: "依赖的工单 id 列表" },
+        coordination: { type: "string", description: "协作说明：做什么、产物放哪、交给谁。会随派发下发给处理人" },
         by: { type: "string", description: "你的节点名，timeline 归因；不带则记成 mcp 无法追溯" }
       },
       required: ["title"]
@@ -252,7 +253,8 @@ const TOOLS = [
       properties: {
         id: { type: "string" },
         assignee: { type: "string", description: "缺省用工单当前 assignee" },
-        by: { type: "string", description: "你的节点名，timeline 归因" }
+        by: { type: "string", description: "你的节点名，timeline 归因" },
+        coordination: { type: "string", description: "协作说明：本次做什么、产物放哪、交给谁。缺省沿用最近一次指派的说明" }
       },
       required: ["id"]
     }
@@ -483,8 +485,11 @@ export async function mcpHandle(raw: string, req: http.IncomingMessage, res: htt
                 owner: a.owner ? String(a.owner) : undefined, startDate: a.startDate, dueDate: a.dueDate,
                 parent: a.parent ? String(a.parent) : undefined,
                 blockedBy: Array.isArray(a.blockedBy) ? a.blockedBy.map(String) : undefined,
+                coordination: a.coordination ? String(a.coordination) : undefined,
                 source: "mcp"
               }, String(a.by ?? "mcp"));
+              // 建单指名处理人即派发，否则对方收不到活（与控制台建单行为一致）
+              if (o.assignee) deps.orderRedispatch(o.id, o.assignee, String(a.by ?? "mcp"), o.coordination);
               reply(toolResult(o));
             } catch (err: any) {
               replyError(orderErrorCode(String(err?.message ?? err)), String(err?.message ?? err));
@@ -554,7 +559,7 @@ export async function mcpHandle(raw: string, req: http.IncomingMessage, res: htt
             return;
           }
           case "mac_order_dispatch": {
-            const r = await deps.orderRedispatch(String(a.id), a.assignee ? String(a.assignee) : undefined, String(a.by ?? "mcp"));
+            const r = await deps.orderRedispatch(String(a.id), a.assignee ? String(a.assignee) : undefined, String(a.by ?? "mcp"), a.coordination ? String(a.coordination) : undefined);
             if (r.ok) reply(toolResult(r));
             else replyError(-32002, r.error ?? "派发失败");
             return;

@@ -376,15 +376,17 @@ export function createServer(options: ServerOptions): http.Server {
   }
 
   /** 重新派发工单：可换 assignee，重建任务入队 */
-  function redispatchOrder(id: string, assignee: string | undefined, by: string): { ok: boolean; taskId?: string; error?: string } {
+  function redispatchOrder(id: string, assignee: string | undefined, by: string, coordination?: string): { ok: boolean; taskId?: string; error?: string } {
     const o = orderStore.get(id);
     if (!o) return { ok: false, error: "工单不存在: " + id };
     if (assignee && assignee !== o.assignee) orderStore.update(id, { assignee }, by);
     const fresh = orderStore.get(id)!;
     if (!fresh.assignee) return { ok: false, error: "工单未指派 assignee" };
     if (!registry.find(fresh.assignee)) return { ok: false, error: "目标不在线或未知: " + fresh.assignee };
-    dispatchOrder(fresh, fresh.assignee, by);
-    orderStore.update(id, { status: "developing", force: true, note: "重新派发 -> " + fresh.assignee }, by);
+    // 显式给了就落库，没给则沿用该单已记录的协作说明
+    const coord = coordination ?? fresh.coordination;
+    dispatchOrder(fresh, fresh.assignee, by, coord);
+    orderStore.update(id, { status: "developing", force: true, note: "重新派发 -> " + fresh.assignee, coordination: coord }, by);
     return { ok: true };
   }
 
@@ -659,7 +661,8 @@ export function createServer(options: ServerOptions): http.Server {
         }, by);
         return created.id;
       }),
-      assign: (id, assignee, note, by) => { orderStore.update(id, { assignee, note }, by); },
+      // PM 的 note 就是协作约定的正式载体，同时落 coordination 供重新派发继承
+      assign: (id, assignee, note, by) => { orderStore.update(id, { assignee, note, coordination: note }, by); },
       updateStatus: (id, status, note, by) => { orderStore.update(id, { status: status as any, note, force: true }, by); },
       sendMessage: (to, text) => {
         if (!mailboxes.has(to)) mailboxes.set(to, []);
@@ -1085,14 +1088,15 @@ export function createServer(options: ServerOptions): http.Server {
       res.end(consoleHtml());
       return;
     }
-    // SPA 静态资源：/assets/* 与 /console/logos/*（logos 兼容旧控制台路径）
+    // SPA 静态资源：/assets/* /console/logos/* /cc0/*（cc0 是 3D 场景的 HDRI）
     const MIME: Record<string, string> = {
       ".js": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml",
       ".png": "image/png", ".ico": "image/x-icon", ".html": "text/html; charset=utf-8",
+      ".exr": "application/octet-stream", ".glb": "model/gltf-binary",
     };
-    const staticPrefixes = ["/assets/", "/console/logos/"];
+    const staticPrefixes = ["/assets/", "/console/logos/", "/cc0/"];
     if (req.method === "GET" && staticPrefixes.some(pre => url.pathname.startsWith(pre))) {
-      const rel = url.pathname.startsWith("/assets/")
+      const rel = url.pathname.startsWith("/assets/") || url.pathname.startsWith("/cc0/")
         ? url.pathname.slice(1)
         : "logos/" + path.basename(url.pathname);
       const file = path.join(webRoot, rel);
@@ -1390,8 +1394,13 @@ export function createServer(options: ServerOptions): http.Server {
       let body = "";
       for await (const chunk of req) body += chunk;
       let assignee: string | undefined;
-      try { assignee = JSON.parse(body || "{}").assignee; } catch { /* 空体按原 assignee */ }
-      const r = redispatchOrder(id, assignee ? String(assignee) : undefined, "human-console");
+      let coordination: string | undefined;
+      try {
+        const p = JSON.parse(body || "{}");
+        assignee = p.assignee;
+        if (typeof p.coordination === "string") coordination = p.coordination;
+      } catch { /* 空体按原 assignee */ }
+      const r = redispatchOrder(id, assignee ? String(assignee) : undefined, "human-console", coordination);
       log("[order] redispatch " + id + " -> " + (r.ok ? "ok" : r.error));
       res.writeHead(200, { "content-type": "application/json", connection: "close" });
       res.end(JSON.stringify(r));
@@ -1409,9 +1418,9 @@ export function createServer(options: ServerOptions): http.Server {
         }
         const fresh = orderStore.get(o.id) ?? o;
         log("[order] created " + o.id + " " + o.title + (o.assignee ? " -> " + o.assignee : ""));
-        // 建单时指名 assignee 则自动派发通知
+        // 建单时指名 assignee 则自动派发通知；人工可显式给协作说明
         if (fresh.assignee && registry.find(fresh.assignee)) {
-          dispatchOrder(fresh, fresh.assignee, "human-console");
+          dispatchOrder(fresh, fresh.assignee, "human-console", typeof b.coordination === "string" ? b.coordination : undefined);
         }
         res.writeHead(200, { "content-type": "application/json", connection: "close" });
         res.end(JSON.stringify({ order: o }));
@@ -1577,7 +1586,7 @@ const mcpDeps: McpFacadeDeps = {
   },
   rework: (orderId, assignee, note, by) => reworkOrder(orderId, assignee, note, by),
   orderCancel: (id, by) => cancelOrder(id, by),
-  orderRedispatch: (id, assignee, by) => redispatchOrder(id, assignee, by),
+  orderRedispatch: (id, assignee, by, coordination) => redispatchOrder(id, assignee, by, coordination),
   getGuide: () => installMd(),
   log
 };

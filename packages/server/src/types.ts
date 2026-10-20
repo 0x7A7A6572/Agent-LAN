@@ -15,16 +15,20 @@ export interface Order {
   parent?: string; blockedBy: string[];
   timeline: OrderEvent[];
   handoffs?: OrderHandoff[];
+  // 协作说明：派发方交代本次做什么、产物放哪、交给谁。随任务下发，与 timeline 的 note 分开存
+  coordination?: string;
 }
 export interface OrderCreateInput {
   title: string; description?: string; status?: string;
   priority?: Order["priority"]; tags?: string[]; source?: string;
   assignee?: string; owner?: string; startDate?: string; dueDate?: string;
   parent?: string; blockedBy?: string[];
+  coordination?: string;
 }
 export interface OrderUpdateInput {
   title?: string; status?: string; priority?: Order["priority"]; tags?: string[];
   assignee?: string; owner?: string; startDate?: string; dueDate?: string;
   description?: string; parent?: string; blockedBy?: string[]; force?: boolean;
   note?: string;
+  coordination?: string;
 }

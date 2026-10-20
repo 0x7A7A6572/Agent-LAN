@@ -63,6 +63,7 @@ export class OrderStore {
       attachments: [],
       parent: input.parent,
       blockedBy: input.blockedBy ?? [],
+      coordination: input.coordination,
       timeline: [{ at: now, by, field: "created", to: input.status ?? "backlog" }],
       // 建单即成边：来源是建单人，落点是首次指派人
       handoffs: input.assignee ? [{ at: now, from: by, to: input.assignee, by }] : []
@@ -141,6 +142,12 @@ export class OrderStore {
     track("blockedBy", patch.blockedBy ?? o.blockedBy);
     if (patch.note) {
       events.push({ at: now, by, field: "note", to: patch.note });
+    }
+    // 协作说明独立成字段：note 会被系统状态文案污染，不能直接当交付约定用
+    if (patch.coordination !== undefined && patch.coordination !== o.coordination) {
+      o.coordination = patch.coordination;
+      o.updatedAt = now;
+      events.push({ at: now, by, field: "coordination", to: patch.coordination });
     }
     // assignee 变化才算一次换手；同一次 update 内先记边再落 timeline
     const handoff = events.find(e => e.field === "assignee");

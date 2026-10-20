@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { Bot, CircleAlert, Play, Square, TriangleAlert, Zap } from 'lucide-vue-next'
+import { Bot, CircleAlert, GitBranch, Lock, Play, Square, TriangleAlert, Zap } from 'lucide-vue-next'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -12,10 +12,14 @@ import { Search } from 'lucide-vue-next'
 import {
   fetchPmConfig,
   fetchPmDecisions,
+  fetchPmFlows,
+  fetchPmPolicy,
   fetchPmWorkbuddy,
   probePmModel,
   readyPmWorkbuddy,
   savePmConfig,
+  savePmFlows,
+  savePmPolicy,
   setPmMode,
 } from '@/api/console'
 import { useConsoleStore } from '@/stores/console'
@@ -37,6 +41,19 @@ const config = ref<PmConfigView>({
   apiKeyConfigured: false,
 })
 const loaded = ref(false)
+// 规则卡片当前 tab：策略与流程作用域不同，分开呈现避免混写
+const ruleTab = ref<'policy' | 'flows'>('policy')
+const policy = ref('')
+const policyDraft = ref('')
+const policySaving = ref(false)
+const policyMsg = ref('')
+const policyDirty = computed(() => policyDraft.value !== policy.value)
+// 协作流程：会随 assign 的 note 下发给节点，改完下次决策生效
+const flows = ref('')
+const flowsDraft = ref('')
+const flowsSaving = ref(false)
+const flowsMsg = ref('')
+const flowsDirty = computed(() => flowsDraft.value !== flows.value)
 const decisions = ref<PmDecisionView[]>([])
 const apiKey = ref('')
 // WorkBuddy 直连的可用性探测结果
@@ -79,6 +96,12 @@ async function load() {
   if (c) { config.value = c; loaded.value = true }
   await loadDecisions()
   wb.value = await fetchPmWorkbuddy()
+  const p = await fetchPmPolicy()
+  policy.value = p.policy ?? ''
+  policyDraft.value = policy.value
+  const f = await fetchPmFlows()
+  flows.value = f.flows ?? ''
+  flowsDraft.value = flows.value
 }
 
 async function toggle() {
@@ -146,6 +169,36 @@ async function save() {
     }
   } finally {
     busy.value = false
+  }
+}
+
+async function savePolicy() {
+  policySaving.value = true
+  try {
+    const r = await savePmPolicy(policyDraft.value)
+    if (r.ok) {
+      policy.value = policyDraft.value
+      policyMsg.value = '策略已保存，下次决策生效'
+    } else {
+      policyMsg.value = r.error || '保存失败'
+    }
+  } finally {
+    policySaving.value = false
+  }
+}
+
+async function saveFlows() {
+  flowsSaving.value = true
+  try {
+    const r = await savePmFlows(flowsDraft.value)
+    if (r.ok) {
+      flows.value = flowsDraft.value
+      flowsMsg.value = '协作流程已保存，下次决策生效'
+    } else {
+      flowsMsg.value = r.error || '保存失败'
+    }
+  } finally {
+    flowsSaving.value = false
   }
 }
 
@@ -430,6 +483,65 @@ defineExpose({ reload: load })
           <Button size="sm" :disabled="busy" @click="save">保存配置</Button>
           <Button size="sm" variant="ghost" @click="load">重新读取</Button>
         </div>
+      </CardContent>
+    </Card>
+
+    <!-- 规则：策略只给 PM 自己看，流程会被转述给节点，两者作用域不同所以分 tab -->
+    <Card>
+      <CardHeader>
+        <CardTitle class="text-sm">规则</CardTitle>
+        <CardDescription>
+          调度策略是 PM 的内部判据，不会外发；协作流程会随派单说明转述给节点。均保存即热生效。
+        </CardDescription>
+      </CardHeader>
+      <CardContent class="grid gap-2">
+        <Tabs v-model="ruleTab" class="grid gap-2">
+          <TabsList variant="line" class="w-full justify-start gap-5 border-b border-border pb-0">
+            <TabsTrigger value="policy" class="flex-none gap-1.5 px-1 text-xs">
+              <Lock class="h-3.5 w-3.5" />
+              调度策略
+              <span class="text-[10px] font-normal text-muted-foreground">仅 PM 可见</span>
+              <span v-if="policyDirty" class="size-1.5 rounded-full bg-amber-500" title="有未保存的修改" />
+            </TabsTrigger>
+            <TabsTrigger value="flows" class="flex-none gap-1.5 px-1 text-xs">
+              <GitBranch class="h-3.5 w-3.5" />
+              协作流程
+              <span class="text-[10px] font-normal text-muted-foreground">转述给节点</span>
+              <span v-if="flowsDirty" class="size-1.5 rounded-full bg-amber-500" title="有未保存的修改" />
+            </TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="policy" class="grid gap-2 mt-1">
+            <p class="text-xs text-muted-foreground">
+              写给 Supervisor 的自定义规则，每次决策时注入 prompt（铁律之外的软约束）。节点看不到。
+            </p>
+            <Textarea v-model="policyDraft" class="min-h-40 font-mono text-xs" placeholder="例如：&#10;- 优先把工单派给空闲且角色匹配的节点&#10;- review 超过 1 小时的工单主动催办&#10;- 测试类任务不要派给 d1" />
+            <div class="flex items-center gap-2">
+              <Button size="sm" :disabled="policySaving || !policyDirty" @click="savePolicy">保存策略</Button>
+              <Button size="sm" variant="ghost" :disabled="!policyDirty" @click="policyDraft = policy">放弃修改</Button>
+              <span v-if="policyMsg" class="text-xs text-muted-foreground">{{ policyMsg }}</span>
+              <span v-else-if="policyDirty" class="text-xs text-amber-600">有未保存的修改</span>
+            </div>
+          </TabsContent>
+
+          <TabsContent value="flows" class="grid gap-2 mt-1">
+            <p class="text-xs text-muted-foreground">
+              谁做什么、产物放哪、交给谁。节点看不到这份内容，PM 会在派单说明里转述给它。
+              随时可改，保存后下一张单即按新流程走，已派发的工单不受影响。
+            </p>
+            <Textarea
+              v-model="flowsDraft"
+              class="min-h-48 font-mono text-xs"
+              placeholder="例如：&#10;## 目录约定&#10;- 共享产物根目录：.mac-files/&#10;&#10;## 角色与交付链&#10;- 开发：产出代码，完成后交给测试节点&#10;- 测试：产出验证报告，问题打回开发"
+            />
+            <div class="flex items-center gap-2">
+              <Button size="sm" :disabled="flowsSaving || !flowsDirty" @click="saveFlows">保存流程</Button>
+              <Button size="sm" variant="ghost" :disabled="!flowsDirty" @click="flowsDraft = flows">放弃修改</Button>
+              <span v-if="flowsMsg" class="text-xs text-muted-foreground">{{ flowsMsg }}</span>
+              <span v-else-if="flowsDirty" class="text-xs text-amber-600">有未保存的修改</span>
+            </div>
+          </TabsContent>
+        </Tabs>
       </CardContent>
     </Card>
 

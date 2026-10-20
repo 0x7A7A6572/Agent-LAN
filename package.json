@@ -2,12 +2,20 @@
   "name": "Agent-LAN",
   "private": true,
   "version": "2.0.0",
-  "description": "LAN 内多 agent 互调服务：A2A 跨机器层 + 本机 adapter",
+  "description": "局域网多 agent 协同平台：常驻 hub 调度 + 会话后台任务接入 + 3D 实时控制台",
   "scripts": {
-    "build": "pnpm -r build",
+    "build": "pnpm --dir web-console build && pnpm -r build",
     "dev": "pnpm -r --parallel dev",
-    "typecheck": "pnpm -r typecheck"
+    "typecheck": "pnpm -r typecheck",
+    "start": "pnpm --filter @mac/app start"
   },
+  "keywords": [
+    "multi-agent",
+    "agent-orchestration",
+    "supervisor",
+    "lan",
+    "threejs"
+  ],
   "engines": {
     "node": ">=20"
   },

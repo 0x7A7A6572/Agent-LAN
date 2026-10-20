@@ -218,7 +218,7 @@ function openRedispatch(order: Order) {
               :presences="store.presences"
               :orders="store.orders"
               :dispatch-mode="store.pmState.mode"
-              @pick-role="onPickRole"
+              :pm-name="store.pmState.pmName"
             />
           </div>
         </div>

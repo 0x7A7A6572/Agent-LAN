@@ -1,9 +1,11 @@
 node_modules/
 dist/
 *.log
-.research/logs/
 .env
 .mac-files/
+
+# 本地排查记录、截图、临时脚本，全部不入库
+.research/
 
 # 运行时数据（由 hub 生成，不入库）
 .roles.json
