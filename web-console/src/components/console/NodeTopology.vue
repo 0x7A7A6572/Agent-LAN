@@ -5,7 +5,7 @@ import type { Presence } from '@/types/console'
 
 const props = defineProps<{
   presences: Presence[]
-  /** 派发权状态：human / pm / degraded，来自 /console/pm */
+  /** 派发权状态：human / pm，来自 /console/pm */
   dispatchMode?: string
   /** PM 节点名；pm 模式下只有它是调度中枢 */
   pmName?: string
@@ -171,7 +171,7 @@ const links = computed(() =>
           :cx="CENTER.x"
           :cy="CENTER.y"
           :r="NODE_R"
-          :class="pmActive ? 'fill-blue-500/10 stroke-blue-500' : mode === 'degraded' ? 'fill-amber-500/10 stroke-amber-500' : 'fill-muted stroke-muted-foreground/40'"
+          :class="pmActive ? 'fill-blue-500/10 stroke-blue-500' : 'fill-muted stroke-muted-foreground/40'"
           stroke-width="1.5"
           :stroke-dasharray="pmActive ? '0' : '5 4'"
         />
@@ -181,7 +181,7 @@ const links = computed(() =>
           text-anchor="middle"
           class="fill-foreground text-[13px] font-semibold"
         >
-          {{ mode === 'human' ? '人工调度' : mode === 'degraded' ? 'PM 降级' : 'Supervisor' }}
+          {{ mode === 'human' ? '人工调度' : 'Supervisor' }}
         </text>
         <text
           :x="CENTER.x"

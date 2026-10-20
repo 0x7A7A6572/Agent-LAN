@@ -109,4 +109,15 @@ export class EventBus {
   get size(): number {
     return this.pending.length;
   }
+
+  /** 是否有活：决策进行中，或有待决策的实体事件（tick 是空转心跳不算） */
+  get active(): boolean {
+    if (this.busy) return true;
+    return this.pending.some(e => e.kind !== "pm/tick");
+  }
+
+  /** 观测快照：排查降级误判用 */
+  get stats() {
+    return { pending: this.pending.length, busy: this.busy, kinds: this.pending.map(e => e.kind) };
+  }
 }

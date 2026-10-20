@@ -15,6 +15,8 @@ export interface Presence {
   online: boolean
   state?: NodeState
   role?: string
+  /** 待处理留言摘要；只展示，不代表节点在忙 */
+  pendingMail?: string
   workingOn?: string
   /** 正在等谁确认什么；有值即需人工介入 */
   waitingFor?: string

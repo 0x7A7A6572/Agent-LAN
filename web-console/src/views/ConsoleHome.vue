@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { ChevronRight, FolderOpen, FileText, Network, ScrollText, Plus, SlidersHorizontal, Ticket, UserCog, TriangleAlert, X } from 'lucide-vue-next'
+import { ChevronRight, FolderOpen, Network, ScrollText, Plus, SlidersHorizontal, Ticket, UserCog, TriangleAlert, X } from 'lucide-vue-next'
 import { useConsoleStore } from '@/stores/console'
 import { setNodeRole, saveRoles } from '@/api/console'
 import CreateOrderDialog from '@/components/console/CreateOrderDialog.vue'
 import NodeCard from '@/components/console/NodeCard.vue'
-import NodeTopology from '@/components/console/NodeTopology.vue'
+import NodeTopology3D from '@/components/console/NodeTopology3D.vue'
 import PmPanel from '@/components/console/PmPanel.vue'
 import RedispatchDialog from '@/components/console/RedispatchDialog.vue'
 import FloatingTabs from '@/components/console/FloatingTabs.vue'
@@ -15,7 +15,7 @@ import LogPanel from '@/components/console/LogPanel.vue'
 import RolesDialog from '@/components/console/RolesDialog.vue'
 import RolePickDialog from '@/components/console/RolePickDialog.vue'
 import FilesDialog from '@/components/console/FilesDialog.vue'
-import InstallDialog from '@/components/console/InstallDialog.vue'
+import InstallPanel from '@/components/console/InstallPanel.vue'
 import { Badge } from '@/components/ui/badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Button } from '@/components/ui/button'
@@ -27,7 +27,6 @@ const store = useConsoleStore()
 
 const rolesOpen = ref(false)
 const filesOpen = ref(false)
-const installOpen = ref(false)
 const pickOpen = ref(false)
 const pickName = ref('')
 const pickCurrent = ref('')
@@ -216,10 +215,10 @@ function openRedispatch(order: Order) {
 
           <!-- 拓扑：Supervisor 在中心，派发链路随接管状态高亮 -->
           <div class="flex min-h-[360px] min-w-0 flex-1 flex-col">
-            <NodeTopology
+            <NodeTopology3D
               :presences="store.presences"
+              :orders="store.orders"
               :dispatch-mode="store.pmState.mode"
-              :pm-name="store.pmState.pmName"
               @pick-role="onPickRole"
             />
           </div>
@@ -272,7 +271,7 @@ function openRedispatch(order: Order) {
         </div>
 
         <!-- 设置视图：PM 接管 + 角色库 + 安装说明 -->
-        <div v-show="view === 'settings'" class="grid gap-4 lg:grid-cols-[1fr_280px]">
+        <div v-show="view === 'settings'" class="grid gap-4 lg:grid-cols-[minmax(0,1fr)_24rem]">
           <PmPanel />
           <div class="flex flex-col gap-4">
             <Card>
@@ -283,9 +282,11 @@ function openRedispatch(order: Order) {
                 <Button variant="outline" size="sm" class="justify-start" @click="rolesOpen = true">
                   <UserCog class="h-4 w-4" />角色库
                 </Button>
-                <Button variant="outline" size="sm" class="justify-start" @click="installOpen = true">
-                  <FileText class="h-4 w-4" />安装说明
-                </Button>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent class="p-3">
+                <InstallPanel />
               </CardContent>
             </Card>
           </div>
@@ -293,7 +294,7 @@ function openRedispatch(order: Order) {
       </main>
 
       <FloatingTabs v-model="view" :tabs="tabs" />
-    <RolesDialog v-model:open="rolesOpen" :roles="store.roles" @save="onRolesSave" />
+    <RolesDialog v-model:open="rolesOpen" :roles="store.roles.map(r => r.name)" @save="onRolesSave" />
     <CreateOrderDialog
       v-model:open="sidebarCreateOpen"
       :presences="store.presences"
@@ -301,7 +302,6 @@ function openRedispatch(order: Order) {
     />
     <RedispatchDialog ref="redispatchDialog" v-model:open="redispatchOpen" :presences="store.presences" @confirm="onOrderRedispatch" />
     <FilesDialog v-model:open="filesOpen" />
-    <InstallDialog v-model:open="installOpen" />
     <RolePickDialog v-model:open="pickOpen" :roles="store.roles" :node-name="pickName" :current="pickCurrent" @pick="onPickConfirm" />
   </div>
 </template>

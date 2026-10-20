@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Label } from '@/components/ui/label'
-import { ChevronLeft, ChevronRight, Search } from 'lucide-vue-next'
+import { Search } from 'lucide-vue-next'
 import {
   fetchPmConfig,
   fetchPmDecisions,
@@ -49,13 +49,15 @@ const wbLoading = ref(false)
 const wbError = ref('')
 const busy = ref(false)
 const msg = ref('')
-// 决策流：自动刷新 / 搜索 / 分页
+// 决策流：自动刷新 / 搜索 / timeline 懒加载
 const decisionsLoading = ref(false)
 let decisionsTimer: ReturnType<typeof setInterval> | undefined
-const DECISIONS_PAGE_SIZE = 10
-const page = ref(1)
-const pageSize = ref(10)
+/** 每次追加的条数：首屏 20 条足够看清最新决策，往下滚再要下一批 */
+const PAGE_STEP = 20
+const visibleCount = ref(PAGE_STEP)
 const search = ref('')
+/** 例行 tick（无动作）默认不显示：它们占 8 成以上，全是「没新事件→不动作」，纯噪音 */
+const onlyImportant = ref(true)
 /** 提示消息的严重程度：失败要显眼，别被当成切换成功 */
 const msgKind = ref<'ok' | 'error'>('ok')
 
@@ -151,8 +153,69 @@ function fmtTime(ms: number) {
   return new Date(ms).toLocaleTimeString('zh-CN', { hour12: false })
 }
 
-// 搜索过滤：匹配推理、错误、驳回原因与事件数
-const filtered = computed(() => {
+/** 日期分隔用的「几月几日」与跨天判定（时间轴按天分组） */
+function fmtDay(ms: number) {
+  const d = new Date(ms)
+  return d.getMonth() + 1 + ' 月 ' + d.getDate() + ' 日'
+}
+function dayKey(ms: number) {
+  const d = new Date(ms)
+  return d.getFullYear() + '-' + d.getMonth() + '-' + d.getDate()
+}
+
+/**
+ * 决策分级：PM 绝大多数 tick 是「没新事件 → 不动作」，这类是噪音，必须和
+ * 「真的动了手 / 失败 / 被驳回」区分开，否则时间轴看下来全是同样的段落。
+ */
+type DecisionKind = 'error' | 'rejected' | 'action' | 'noop'
+
+/** 真实动作：PM 无事可做时会回一个 kind=noop 的动作占位，applied 照样 +1，不能拿 applied 判断 */
+function realActions(d: PmDecisionView) {
+  return d.actions.filter(a => a.kind !== 'noop')
+}
+
+function kindOf(d: PmDecisionView): DecisionKind {
+  if (d.error) return 'error'
+  if (d.rejected?.length) return 'rejected'
+  if (realActions(d).length) return 'action'
+  return 'noop'
+}
+
+/** 重要 = 失败了 / 有动作被驳回 / 真的执行了动作；其余都算「无动作的例行 tick」 */
+function isImportant(d: PmDecisionView) {
+  return kindOf(d) !== 'noop'
+}
+
+/** 节点颜色：失败琥珀 / 被驳回天蓝 / 有动作翡翠 / 无动作灰（弱化） */
+function dotClass(d: PmDecisionView) {
+  const k = kindOf(d)
+  if (k === 'error') return 'bg-amber-500'
+  if (k === 'rejected') return 'bg-sky-500'
+  if (k === 'action') return 'bg-emerald-500'
+  return 'bg-muted-foreground/35'
+}
+
+/** 行内小标签：只给「重要」的行加，noop 不加标签保持安静 */
+function kindLabel(d: PmDecisionView) {
+  const k = kindOf(d)
+  if (k === 'error') return { text: '失败', cls: 'bg-amber-500/15 text-amber-600' }
+  if (k === 'rejected') return { text: '有驳回', cls: 'bg-sky-500/15 text-sky-600' }
+  if (k === 'action') return { text: '已动作', cls: 'bg-emerald-500/15 text-emerald-600' }
+  return null
+}
+
+/** 轴线只在节点之间延伸：首个节点不向上、末个节点不向下画线头 */
+function axisClass(i: number, total: number) {
+  const first = i === 0
+  const last = i === total - 1
+  if (first && last) return 'hidden'
+  if (first) return 'top-[5px] bottom-0'
+  if (last) return 'top-0 h-[9px]'
+  return 'top-0 bottom-0'
+}
+
+// 搜索命中集：匹配推理、错误、驳回原因与事件数（「只看重要」不参与，供计数复用）
+const matched = computed(() => {
   const q = search.value.trim().toLowerCase()
   if (!q) return decisions.value
   return decisions.value.filter(d =>
@@ -163,14 +226,67 @@ const filtered = computed(() => {
   )
 })
 
-const pageCount = computed(() => Math.max(1, Math.ceil(filtered.value.length / pageSize.value)))
-const paged = computed(() => {
-  const start = (page.value - 1) * pageSize.value
-  return filtered.value.slice(start, start + pageSize.value)
+/** 真正渲染的集合：再看用户是否只要重要的 */
+const filtered = computed(() => (onlyImportant.value ? matched.value.filter(isImportant) : matched.value))
+
+/** 头部计数：当前搜索范围里「重要」有多少条，用来一眼看出噪音占比 */
+const importantCount = computed(() => matched.value.filter(isImportant).length)
+const noopCount = computed(() => matched.value.length - importantCount.value)
+
+/** 空态文案：区分「真没有记录」「搜索没命中」「全是例行被隐藏了」 */
+const emptyText = computed(() => {
+  if (matched.value.length && !filtered.value.length) {
+    return `这 ${matched.value.length} 条都是例行 tick（无动作），已隐藏；点右上「全部」可查看`
+  }
+  return search.value
+    ? '没有匹配的决策记录'
+    : '还没有重要决策。开启 PM 接管后，真正动了手 / 失败 / 被驳回的判断会留在这里。'
 })
 
-// 搜索词或总数变化时把页码夹回有效范围
-watch([search, () => filtered.value.length], () => { if (page.value > pageCount.value) page.value = pageCount.value })
+/** 懒加载：只渲染前 visibleCount 条，其余等用户滚到底/点按钮再追加 */
+const visible = computed(() => filtered.value.slice(0, visibleCount.value))
+const hasMore = computed(() => visibleCount.value < filtered.value.length)
+const restCount = computed(() => Math.max(0, filtered.value.length - visibleCount.value))
+
+/** 展开状态：按行下标记，默认全部收起（时间轴先给轮廓，细节按需展开） */
+const expanded = ref<Record<number, boolean>>({})
+
+/** 渲染行：预先算好「这条要不要插日期分隔」，模板里就不必按下标回看前一条 */
+const rows = computed(() => {
+  let prev = ''
+  return visible.value.map(d => {
+    const k = dayKey(d.at)
+    const showDay = k !== prev
+    prev = k
+    return { d, showDay, kind: kindOf(d), label: kindLabel(d), acts: realActions(d).length }
+  })
+})
+
+function loadMore() {
+  if (!hasMore.value || decisionsLoading.value) return
+  visibleCount.value += PAGE_STEP
+}
+
+// 搜索条件变化 → 回到第一批，避免停在「搜出 3 条却显示空了」；展开态一并复位（行下标已变）
+watch(search, () => {
+  visibleCount.value = PAGE_STEP
+  expanded.value = {}
+})
+
+// 触底哨兵：滚到列表底部自动追加，不用手点
+const sentinel = ref<HTMLElement | null>(null)
+let io: IntersectionObserver | undefined
+watch(sentinel, el => {
+  io?.disconnect()
+  io = undefined
+  if (!el) return
+  io = new IntersectionObserver(
+    entries => { if (entries.some(e => e.isIntersecting)) loadMore() },
+    { rootMargin: '160px' },
+  )
+  io.observe(el)
+})
+onUnmounted(() => { io?.disconnect(); io = undefined })
 
 // 打开页面即开始自动刷新：决策是后台发生的，不刷就看不见
 onMounted(() => {
@@ -327,69 +443,121 @@ defineExpose({ reload: load })
             <span v-else class="flex items-center gap-1 text-[10px] text-muted-foreground">
               <i class="size-1.5 animate-pulse rounded-full bg-emerald-500" />5s 自动刷新
             </span>
-            <Badge variant="outline" class="text-[10px]">{{ filtered.length }}</Badge>
+            <Badge variant="outline" class="text-[10px]">
+              重要 {{ importantCount }}
+              <span v-if="onlyImportant && noopCount" class="text-muted-foreground/70">（隐藏 {{ noopCount }} 条例行）</span>
+            </Badge>
           </div>
         </div>
         <CardDescription>每次事件批处理的推理、动作与驳回原因</CardDescription>
       </CardHeader>
       <CardContent class="flex flex-col gap-2">
         <!-- 搜索：推理 / 错误 / 驳回原因 / 事件数 -->
-        <div class="relative">
-          <Search class="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-          <Input v-model="search" class="h-8 pl-8 text-xs" placeholder="搜索决策…" />
-        </div>
-        <div
-          v-for="(d, i) in paged"
-          :key="d.at + '-' + i"
-          class="rounded-md border p-2.5 text-xs"
-          :class="d.error ? 'border-amber-500/50 bg-amber-500/5' : ''"
-        >
-          <div class="flex items-center gap-2">
-            <span class="font-mono text-muted-foreground">{{ fmtTime(d.at) }}</span>
-            <Badge v-if="d.error" variant="outline" class="border-amber-500/60 text-[10px] text-amber-600">失败</Badge>
-            <Badge v-else variant="outline" class="text-[10px]">执行 {{ d.applied }}/{{ d.actions.length }}</Badge>
-            <span class="text-muted-foreground">{{ d.eventCount }} 事件 · {{ d.durationMs }}ms</span>
+        <div class="flex items-center gap-2">
+          <div class="relative flex-1">
+            <Search class="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input v-model="search" class="h-8 pl-8 text-xs" placeholder="搜索决策…" />
           </div>
-          <p v-if="d.reasoning" class="mt-1 line-clamp-2">{{ d.reasoning }}</p>
-          <p v-if="d.error" class="mt-1 flex items-start gap-1 text-amber-600">
-            <CircleAlert class="mt-0.5 h-3.5 w-3.5 shrink-0" />{{ d.error }}
-          </p>
-          <ul v-if="d.rejected?.length" class="mt-1 flex flex-col gap-0.5 text-amber-600">
-            <li v-for="(r, j) in d.rejected" :key="j" class="flex items-start gap-1">
-              <TriangleAlert class="mt-0.5 h-3 w-3 shrink-0" />{{ r.reason }}
-            </li>
-          </ul>
+          <!-- 一键滤掉「无动作的例行 tick」：区分重要/不重要靠这个开关 + 节点配色 -->
+          <button
+            type="button"
+            class="h-8 shrink-0 rounded-md border px-2.5 text-[11px] transition-colors"
+            :class="onlyImportant
+              ? 'border-emerald-500/60 bg-emerald-500/10 text-emerald-600'
+              : 'border-border text-muted-foreground hover:text-foreground'"
+            :aria-pressed="onlyImportant"
+            data-testid="only-important"
+            @click="onlyImportant = !onlyImportant"
+          >{{ onlyImportant ? '仅看重要' : `全部 ${matched.length} 条` }}</button>
+        </div>
+        <!-- timeline：左侧时间列 + 贯穿轴线 + 无边框内容；滚到底自动加载下一批 -->
+        <div v-if="visible.length" class="flex flex-col text-xs">
+          <template v-for="(row, i) in rows" :key="row.d.at + '-' + i">
+            <!-- 跨天插一条日期分隔，时间轴才有「时间流逝」的感觉 -->
+            <div
+              v-if="row.showDay"
+              class="flex items-center gap-2 pb-1 pt-1.5 text-[10px] text-muted-foreground first:pt-0"
+            >
+              <span class="font-medium">{{ fmtDay(row.d.at) }}</span>
+              <span class="h-px flex-1 bg-border/50" />
+            </div>
+            <div
+              data-testid="decision-item"
+              class="group relative flex gap-2.5"
+              :data-kind="row.kind"
+            >
+              <!-- 时间列：定宽右对齐，轴线才有稳定基准 -->
+              <span class="w-10 shrink-0 pt-px text-right font-mono text-[10px] leading-4 text-muted-foreground">
+                {{ fmtTime(row.d.at).slice(0, 5) }}
+              </span>
+              <!-- 轴线：只在节点上下延伸，首个节点上方 / 末个节点下方不画多余线头 -->
+              <span class="relative flex w-3 shrink-0 justify-center" aria-hidden="true">
+                <span class="absolute left-1/2 w-px -translate-x-1/2 bg-border/70" :class="axisClass(i, rows.length)" />
+                <span class="relative z-10 mt-[5px] size-[7px] shrink-0 rounded-full ring-4 ring-background" :class="dotClass(row.d)" />
+              </span>
+              <!-- 内容：不加边框/底色，靠左侧轴线与间距分组；hover 才给一层淡底 -->
+              <div
+                class="min-w-0 flex-1 -ml-1 rounded-md px-2 pt-px transition-colors group-hover:bg-accent/40"
+                :class="row.kind === 'noop' ? 'opacity-65 pb-2' : 'pb-3'"
+              >
+                <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <!-- 重要行给明确标签；例行 tick 只留「无动作」的淡字，不抢视线 -->
+                  <span
+                    v-if="row.label"
+                    class="rounded px-1.5 py-px text-[10px] font-medium"
+                    :class="row.label.cls"
+                  >{{ row.label.text }}</span>
+                  <span
+                    class="text-[11px]"
+                    :class="row.kind === 'noop' ? 'text-muted-foreground/70' : 'text-muted-foreground'"
+                  >{{ row.kind === 'noop' ? '无动作' : `动作 ${row.acts}` }}</span>
+                  <span class="text-[10px] text-muted-foreground/80">{{ row.d.eventCount }} 事件 · {{ row.d.durationMs }}ms</span>
+                </div>
+                <!-- 推理默认只给一行：决策流要能一眼扫完；想细看再展开 -->
+                <p
+                  v-if="row.d.reasoning"
+                  class="mt-0.5 leading-relaxed"
+                  :class="expanded[i] ? 'whitespace-pre-wrap' : 'line-clamp-1'"
+                >{{ row.d.reasoning }}</p>
+                <button
+                  v-if="row.d.reasoning.length > 48"
+                  type="button"
+                  class="mt-px text-[10px] text-sky-500/80 transition-opacity hover:text-sky-500 hover:underline"
+                  :class="expanded[i] ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'"
+                  @click="expanded[i] = !expanded[i]"
+                >{{ expanded[i] ? '收起' : '展开全文' }}</button>
+                <p v-if="row.d.error" class="mt-1 flex items-start gap-1 text-amber-600">
+                  <CircleAlert class="mt-0.5 h-3.5 w-3.5 shrink-0" />{{ row.d.error }}
+                </p>
+                <ul v-if="row.d.rejected?.length" class="mt-1 flex flex-col gap-0.5 text-amber-600">
+                  <li v-for="(r, j) in row.d.rejected" :key="j" class="flex items-start gap-1">
+                    <TriangleAlert class="mt-0.5 h-3 w-3 shrink-0" />{{ r.reason }}
+                  </li>
+                </ul>
+              </div>
+            </div>
+          </template>
         </div>
         <p v-if="!filtered.length" class="py-6 text-center text-muted-foreground">
-          {{ search ? '没有匹配的决策记录' : '还没有决策记录。开启 PM 接管后，事件批次会在这里留下推理与执行结果。' }}
+          {{ emptyText }}
         </p>
 
-        <!-- 分页条 -->
-        <div
-          v-if="filtered.length"
-          class="flex flex-wrap items-center justify-between gap-2 border-t pt-2 text-xs text-muted-foreground"
-        >
-          <span>共 {{ filtered.length }} 条 · 第 {{ page }} / {{ pageCount }} 页</span>
-          <div class="flex items-center gap-2">
-            <Select v-model="pageSize">
-              <SelectTrigger class="h-7 w-[100px] text-xs" aria-label="每页条数">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem :value="10">每页 10 条</SelectItem>
-                <SelectItem :value="20">每页 20 条</SelectItem>
-                <SelectItem :value="50">每页 50 条</SelectItem>
-              </SelectContent>
-            </Select>
-            <Button variant="outline" size="sm" class="h-7 px-2" :disabled="page <= 1" @click="page--">
-              <ChevronLeft class="h-4 w-4" />
-              上一页
-            </Button>
-            <Button variant="outline" size="sm" class="h-7 px-2" :disabled="page >= pageCount" @click="page++">
-              下一页
-              <ChevronRight class="h-4 w-4" />
-            </Button>
-          </div>
+        <!-- 懒加载尾部：进视口即自动追加；按钮兜底给不滚动的场景 -->
+        <div v-if="filtered.length" ref="sentinel" class="flex flex-col items-center gap-1 border-t pt-2">
+          <Button
+            v-if="hasMore"
+            data-testid="decision-loadmore"
+            variant="outline"
+            size="sm"
+            class="h-7 px-3 text-xs"
+            :disabled="decisionsLoading"
+            @click="loadMore"
+          >
+            {{ decisionsLoading ? '加载中…' : `加载更早的 ${Math.min(restCount, PAGE_STEP)} 条` }}
+          </Button>
+          <span class="text-[10px] text-muted-foreground">
+            共 {{ filtered.length }} 条 · 已加载 {{ visible.length }} 条{{ hasMore ? '' : ' · 已全部加载' }}
+          </span>
         </div>
       </CardContent>
     </Card>

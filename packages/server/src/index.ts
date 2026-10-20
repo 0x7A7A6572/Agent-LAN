@@ -155,21 +155,16 @@ export function createServer(options: ServerOptions): http.Server {
   // 控制台的执行中态原来只由「任务投递 / report(working)」驱动，于是：
   //   留言送达 → worker 消费后即退出 → 没有任何置执行态的时机 → 控制台一直显示「空闲」
   // 这里把三类来源统一成执行态：task（投递驱动）、message（送达驱动）、agent（节点自报，如人工接管）。
-  const MSG_BUSY_TTL_MS = 10 * 60 * 1000;   // 留言消化兜底；节点下一次领活即提前清除
   const AGENT_BUSY_TTL_MS = 15 * 60 * 1000; // 节点主动上报兜底；显式 idle 可提前清除
 
-  /** 留言送达即置执行中（留言没有任务生命周期，不置位控制台就看不见） */
-  function markMailBusy(name: string, mail: { text?: string; from?: string }[]): void {
-    if (!mail.length) return;
-    const first = String(mail[0]?.text ?? "").replace(/\s+/g, " ").trim();
-    const more = mail.length > 1 ? "等 " + mail.length + " 条" : "";
+  /** 待处理留言摘要：只做展示，不置执行态——留言送达不代表在忙 */
+  function mailOf(name: string): string | undefined {
+    const list = mailboxes.get(name) ?? [];
+    if (!list.length) return undefined;
+    const first = String(list[0]?.text ?? "").replace(/\s+/g, " ").trim();
+    const more = list.length > 1 ? "等 " + list.length + " 条" : "";
     const preview = first.length > 24 ? first.slice(0, 24) + "…" : first;
-    registry.setBusy(name, true, "处理留言" + more + "：" + (preview || "(空)"), "message", MSG_BUSY_TTL_MS);
-  }
-
-  /** 节点重新领活 = 上一条留言已消化完，清掉留言执行态（任务态与主动上报态不动） */
-  function clearMailBusyOnPull(name: string): void {
-    if (registry.busyKindOf(name) === "message") registry.setBusy(name, false);
+    return "待处理留言" + more + "：" + (preview || "(空)");
   }
 
   /** 投递确认送达：清 in-flight 标志，此后不再被当作丢失回收 */
@@ -338,18 +333,23 @@ export function createServer(options: ServerOptions): http.Server {
     syncOrderFromTask(t, "canceled", "hub-cancel");
   }
 
-  /** 工单派发 prompt：建单与重新派发共用一份格式 */
-  function orderPrompt(o: Order): string {
+  /**
+   * 工单派发 prompt：建单与重新派发共用一份格式。
+   * coordination 是派发方的协作说明（PM 写的 note），必须随任务下发——
+   * 节点看不到 hub 侧策略，只有这段文字能告诉它跟谁协作、产物交给谁。
+   */
+  function orderPrompt(o: Order, coordination?: string): string {
     const attLines = o.attachments.length
       ? "\n\n[附件] " + o.attachments.map(a => a.name + ": " + a.uri).join("\n") : "";
-    return "[工单 " + o.id + "] " + o.title + "\n" + o.description + attLines +
+    const coLines = coordination?.trim() ? "\n\n[协作说明] " + coordination.trim() : "";
+    return "[工单 " + o.id + "] " + o.title + "\n" + o.description + attLines + coLines +
       "\n\n[开工先 mac_report(taskId, state=\"working\", name=你的节点名)；完成后 mac_report(completed)。这是硬性流程]";
   }
 
   /** 建单即派发：生成任务入库并入队目标节点 */
-  function dispatchOrder(o: Order, assignee: string, by: string): void {
+  function dispatchOrder(o: Order, assignee: string, by: string, coordination?: string): void {
     const now = new Date().toISOString();
-    const task: Task = { id: randomUUID(), state: "submitted", prompt: orderPrompt(o), artifacts: [], createdAt: now, updatedAt: now };
+    const task: Task = { id: randomUUID(), state: "submitted", prompt: orderPrompt(o, coordination), artifacts: [], createdAt: now, updatedAt: now };
     tasks.set(task.id, task);
     saveTasks();
     enqueueFor(assignee, task, by, o.id);
@@ -416,7 +416,7 @@ export function createServer(options: ServerOptions): http.Server {
     const task = {
       id: randomUUID(),
       state: "submitted" as const,
-      prompt: orderPrompt(fresh) + "\n\n[返工] " + note + "（发起方 " + by + "）",
+      prompt: orderPrompt(fresh, "返工原因：" + note) + "\n\n[返工] " + note + "（发起方 " + by + "）",
       artifacts: [],
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
@@ -478,8 +478,7 @@ export function createServer(options: ServerOptions): http.Server {
   const roleStore = new RoleStore(options.rolesPath
     ?? path.join(path.resolve(options.filesDir ?? ".mac-files"), "..", ".roles.json"));
   // 派发权门禁：调度控制流归 Supervisor，PM 只是临时持有者
-  const gate = new DispatchGate({ pmTimeoutMs: 60000, onLog: log });
-  gate.start();
+  const gate = new DispatchGate({ onLog: log });
 
   // ── Supervisor 决策闭环 ──────────────────────────────────────────────
   const pmDir = options.ordersPath ? path.dirname(options.ordersPath)
@@ -488,11 +487,13 @@ export function createServer(options: ServerOptions): http.Server {
   let pmConfig: PmConfig = loadConfig(pmFiles.config);
   const pmMemory: PmMemory = loadMemory(pmFiles.memory);
   let pmPolicy = "";
+  let pmFlows = "";
   try { pmPolicy = fs.readFileSync(pmFiles.policy, "utf8"); } catch { /* 策略文件可选 */ }
+  try { pmFlows = fs.readFileSync(pmFiles.flows, "utf8"); } catch { /* 协作流程可选 */ }
 
   /**
    * 接管前置检查：模型配置不可用时不允许把派发权交给 PM。
-   * 否则所有跨工单派发会卡在一个不存在的端点后面，只能靠 60s 超时降级兜底。
+   * 否则所有跨工单派发会卡在一个不存在的端点后面，只能人为收回派发权。
    * @returns 具体问题描述；可用则返回 null
    */
   function pmReadiness(): string | null {
@@ -582,13 +583,47 @@ export function createServer(options: ServerOptions): http.Server {
     catch (err: any) { log("[pm] 记忆落盘失败: " + String(err?.message ?? err)); }
   }
 
+  /**
+   * PM 失联次数：模型调用或解析失败累计即 +1。
+   * 不自动放行派发权，只在控制台置顶提示，由人决定继续等还是收回。
+   */
+  let pmFailStreak = 0;
+
+  const TERMINAL = new Set(["done", "canceled"]);
+
+  /**
+   * 决策前预判：只拦「模型必然只能回 noop」的局面，省掉一次调用。
+   * 节点在忙不算——队列会收任务，忙完照领会拿到。
+   * 返回 null 表示需要决策，返回字符串即跳过原因。
+   */
+  function precheckPm(batch: HubEvent[]): string | null {
+    if (!registry.list().some(p => p.online)) return "当前无在线节点";
+
+    const open = orderStore.list({}).filter(o => !TERMINAL.has(o.status));
+    if (!open.length) return "无未完成工单";
+
+    // 人接管与依赖阻塞的工单 PM 动不了，剔掉后还有可动的就交模型
+    const actionable = open.filter(o => o.assignee !== "human-console" && !isBlocked(o));
+    if (actionable.length) return null;
+
+    // 剩下的只能在已派发工单内部推进：状态复述、验收通过、改派。
+    // 有新鲜事件时照旧交模型；纯 tick 空转才跳过
+    if (batch.some(e => e.kind !== "pm/tick")) return null;
+    return "无可推进项：未完成工单均被人接管或依赖阻塞";
+  }
+
+  function isBlocked(o: Order): boolean {
+    return o.status === "blocked" || (o.blockedBy ?? []).some(b => !TERMINAL.has(orderStore.get(b)?.status ?? ""));
+  }
+
   /** 一次决策：批次交给 LLM，动作逐条过校验后落地 */
   async function runPmBatch(batch: HubEvent[]): Promise<void> {
     const effective = pmConfig;
     if (pmConfig.provider === "workbuddy") {
       const bootErr = await ensureWorkbuddy();
       if (bootErr) {
-        log("[pm] 决策跳过：WorkBuddy 不可用（" + bootErr + "）");
+        pmFailStreak++;
+        log("[pm] 决策跳过：WorkBuddy 不可用（" + bootErr + "），连续失败 " + pmFailStreak + " 次");
         return;
       }
     }
@@ -600,13 +635,18 @@ export function createServer(options: ServerOptions): http.Server {
         : undefined,
       memory: () => pmMemory,
       policy: () => pmPolicy,
+      flows: () => pmFlows,
       openOrders: () => orderStore.list({}).filter(o => o.status !== "done" && o.status !== "canceled"),
       nodes: () => withRoles(registry.list()).map(p => ({
         name: p.card.name,
         online: p.online,
         state: p.state,
+        // 只有持有未回报任务才算真忙；处理留言、主动接管都会在下一轮领活时自动清空
+        busy: [...tasks.values()].some(t =>
+          t.state === "working" && t.deliveredTo === p.card.name && !t.reportedAt),
         workingOn: p.workingOn,
         role: p.role,
+        roleDesc: roleStore.allowed.find(r => r.name === p.role)?.desc,
         queuedCount: p.queuedCount
       })),
       createOrders: (list, by) => list.map(o => {
@@ -625,20 +665,24 @@ export function createServer(options: ServerOptions): http.Server {
         if (!mailboxes.has(to)) mailboxes.set(to, []);
         mailboxes.get(to)!.push({ text, from: "hub-pm", at: new Date().toISOString() });
       },
-      dispatch: (id, assignee, by) => {
+      dispatch: (id, assignee, by, note) => {
         const o = orderStore.get(id);
-        if (o) dispatchOrder(o, assignee, by);
+        if (o) dispatchOrder(o, assignee, by, note);
       },
       log
     });
 
     pmMemory.decisions.push(decision);
     persistMemory();
-    if (decision.error) log("[pm] 决策失败: " + decision.error);
-    else log("[pm] 决策: " + (decision.reasoning || "(无推理)") + " 执行 " + decision.applied + "/" + decision.actions.length +
-      (decision.rejected.length ? " 驳回 " + decision.rejected.length : ""));
-    // 成功决策续命门禁，避免误判降级
-    if (!decision.error) gate.beat();
+    if (decision.error) {
+      pmFailStreak++;
+      log("[pm] 决策失败: " + decision.error + "（连续失败 " + pmFailStreak + " 次，派发权仍归 PM）");
+    } else {
+      pmFailStreak = 0;
+      log("[pm] 决策: " + (decision.reasoning || "(无推理)") + " 执行 " + decision.applied + "/" + decision.actions.length +
+        (decision.rejected.length ? " 驳回 " + decision.rejected.length : ""));
+      gate.beat();
+    }
   }
 
   const eventBus = new EventBus({
@@ -646,6 +690,12 @@ export function createServer(options: ServerOptions): http.Server {
     tickMs: pmConfig.tickMs,
     onBatch: async batch => {
       if (gate.current !== "pm") return;
+      const idle = precheckPm(batch);
+      if (idle) {
+        log("[pm] 跳过决策：" + idle + "（批次 " + batch.length + " 条）");
+        gate.beat();
+        return;
+      }
       await runPmBatch(batch);
     },
     onLog: log
@@ -703,7 +753,8 @@ export function createServer(options: ServerOptions): http.Server {
     list.map(p => ({
       ...p,
       role: roleStore.get(p.card.name) || undefined,
-      queuedCount: pullQueues.get(p.card.name)?.length ?? 0
+      queuedCount: pullQueues.get(p.card.name)?.length ?? 0,
+      pendingMail: mailOf(p.card.name)
     }));
   // 落盘是防抖的：退出前同步 flush，防尾写丢失
   const flushStores = () => { orderStore.flushNow(); registry.flushNow(); flushQueues(); flushTasks(); };
@@ -958,11 +1009,8 @@ export function createServer(options: ServerOptions): http.Server {
         return;
       }
       const timeoutMs = Math.min(Number(url.searchParams.get("timeout")) || PULL_TIMEOUT_MS, 55000);
-      clearMailBusyOnPull(name);
       const task = await pullTask(name, timeoutMs);
       const messages = dropMail(name);
-      // 留言不走任务生命周期：送达即置执行中，否则控制台看不到「正在处理」
-      if (!task) markMailBusy(name, messages);
       if (messages.length) pushPresence();
       res.writeHead(200, { "content-type": "application/json", connection: "close" });
       res.end(JSON.stringify({ task, messages }));
@@ -1109,7 +1157,7 @@ export function createServer(options: ServerOptions): http.Server {
     }
     if (req.method === "GET" && url.pathname === "/console/roles") {
       res.writeHead(200, { "content-type": "application/json", connection: "close" });
-      res.end(JSON.stringify({ roles: roleStore.all(), allowed: roleStore.allowed }));
+      res.end(JSON.stringify({ roles: roleStore.all(), allowed: roleStore.allowed, names: roleStore.names }));
       return;
     }
     if (req.method === "GET" && url.pathname === "/console/pm/state") {
@@ -1120,7 +1168,10 @@ export function createServer(options: ServerOptions): http.Server {
         enabled: gate.current !== "human",
         model: pmConfig.model,
         baseUrl: pmConfig.baseUrl,
-        apiKeyConfigured: !!pmConfig.apiKey
+        apiKeyConfigured: !!pmConfig.apiKey,
+        lastPmAgoMs: Date.now() - gate.lastBeat,
+        failStreak: pmFailStreak,
+        bus: eventBus.stats
       }));
       return;
     }
@@ -1177,6 +1228,52 @@ export function createServer(options: ServerOptions): http.Server {
       res.end(JSON.stringify(problem ? { ok: false, error: problem } : { ok: true }));
       return;
     }
+    if (req.method === "GET" && url.pathname === "/console/pm/policy") {
+      res.writeHead(200, { "content-type": "application/json", connection: "close" });
+      res.end(JSON.stringify({ policy: pmPolicy }));
+      return;
+    }
+    if (req.method === "GET" && url.pathname === "/console/pm/flows") {
+      res.writeHead(200, { "content-type": "application/json", connection: "close" });
+      res.end(JSON.stringify({ flows: pmFlows }));
+      return;
+    }
+    if (req.method === "PUT" && url.pathname === "/console/pm/flows") {
+      let body = "";
+      for await (const chunk of req) body += chunk;
+      try {
+        const { flows } = JSON.parse(body || "{}") as { flows?: string };
+        if (typeof flows !== "string") throw new Error("flows 必须是字符串");
+        pmFlows = flows;
+        try { fs.writeFileSync(pmFiles.flows, flows); }
+        catch (err: any) { log("[pm] 协作流程落盘失败: " + String(err?.message ?? err)); }
+        log("[pm] 协作流程已更新（" + flows.length + " 字，下次决策生效）");
+        res.writeHead(200, { "content-type": "application/json", connection: "close" });
+        res.end(JSON.stringify({ ok: true }));
+      } catch (err: any) {
+        res.writeHead(200, { "content-type": "application/json", connection: "close" });
+        res.end(JSON.stringify({ ok: false, error: String(err?.message ?? err) }));
+      }
+      return;
+    }
+    if (req.method === "PUT" && url.pathname === "/console/pm/policy") {
+      let body = "";
+      for await (const chunk of req) body += chunk;
+      try {
+        const { policy } = JSON.parse(body || "{}") as { policy?: string };
+        if (typeof policy !== "string") throw new Error("policy 必须是字符串");
+        pmPolicy = policy;
+        try { fs.writeFileSync(pmFiles.policy, policy); }
+        catch (err: any) { log("[pm] 策略落盘失败: " + String(err?.message ?? err)); }
+        log("[pm] 策略已更新（" + policy.length + " 字，下次决策生效）");
+        res.writeHead(200, { "content-type": "application/json", connection: "close" });
+        res.end(JSON.stringify({ ok: true }));
+      } catch (err: any) {
+        res.writeHead(200, { "content-type": "application/json", connection: "close" });
+        res.end(JSON.stringify({ ok: false, error: String(err?.message ?? err) }));
+      }
+      return;
+    }
     if (req.method === "GET" && url.pathname === "/console/pm/decisions") {
       res.writeHead(200, { "content-type": "application/json", connection: "close" });
       const limit = Math.min(Number(url.searchParams.get("limit")) || 20, 100);
@@ -1193,7 +1290,7 @@ export function createServer(options: ServerOptions): http.Server {
         return;
       }
       // 接管前必须确认模型真的能用：配置缺失或端点不通时接管，
-      // 等于让所有跨工单派发停在一个不存在的 LLM 后面，只能等 60s 超时降级
+      // 等于让所有跨工单派发停在一个不存在的 LLM 后面，只能人为收回
       if (mode === "pm") {
         const problem = await pmProbe();
         if (problem) {
@@ -1215,9 +1312,10 @@ export function createServer(options: ServerOptions): http.Server {
       let body = "";
       for await (const chunk of req) body += chunk;
       const { roles } = JSON.parse(body);
-      const list = Array.isArray(roles) ? roles.map(String) : [];
+      // 兼容旧前端：字符串数组与 { name, desc } 都收
+      const list = Array.isArray(roles) ? roles : [];
       const saved = roleStore.setAllowed(list);
-      log("[role] 允许列表 -> " + (saved.join(", ") || "（空）"));
+      log("[role] 角色库 -> " + (saved.map(r => r.name).join(", ") || "（空）"));
       res.writeHead(200, { "content-type": "application/json", connection: "close" });
       res.end(JSON.stringify({ ok: true, allowed: saved }));
       return;
@@ -1436,11 +1534,8 @@ const mcpDeps: McpFacadeDeps = {
     };
   },
   pullTask: async (name, ms) => {
-    clearMailBusyOnPull(name);
     const task = await pullTask(name, ms);
     const mail = dropMail(name);
-    // 与 HTTP /agent/pull 保持一致：留言送达即置执行中
-    if (!task) markMailBusy(name, mail);
     if (mail.length) pushPresence();
     return { task, messages: mail };
   },

@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { Mail, Monitor, Pencil, TrendingUp, TriangleAlert } from 'lucide-vue-next'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
@@ -31,9 +30,32 @@ const working = computed(() => props.presence.online && props.presence.state ===
 const waiting = computed(() => props.presence.waitingFor || '')
 // 只有心跳、没有长轮询：节点看着在线但收不到任务（worker.sh 已退出，只剩伴生心跳）
 const staleOnly = computed(() => props.presence.online && !props.presence.mcpActive && !props.presence.state)
+// 待处理留言：送达不等于在忙，只作提示，状态仍按真实执行态显示
+const pendingMail = computed(() => props.presence.pendingMail || '')
 const time = computed(() => new Date(props.presence.lastSeen).toLocaleTimeString('zh-CN', { hour12: false }))
 // 设备分组：服务端算好的 groupHost（卡片 host > 来源 IP > url 兜底）
 const group = computed(() => props.presence.groupHost || props.presence.card.host || props.presence.card.url)
+// 状态只用圆点+文字表达，与拓扑图例同一套色：绿空闲 蓝执行 琥珀等人工 灰离线
+const dotClass = computed(() =>
+  waiting.value
+    ? 'bg-amber-500'
+    : working.value
+      ? 'bg-blue-500'
+      : staleOnly.value
+        ? 'bg-orange-500'
+        : pendingMail.value
+          ? 'bg-sky-500'
+          : props.presence.online
+            ? 'bg-emerald-500'
+            : 'bg-muted-foreground/40',
+)
+const statusText = computed(() => {
+  if (waiting.value) return '等人工'
+  if (working.value) return '执行中'
+  if (staleOnly.value) return '仅心跳·不领活'
+  if (pendingMail.value) return '待看留言'
+  return props.presence.online ? '空闲' : '离线'
+})
 
 // 留言弹窗：目标即本卡节点
 const mailOpen = ref(false)
@@ -77,27 +99,18 @@ async function send() {
 </script>
 
 <template>
-  <Card
-    class="flex flex-col gap-3 py-4 pb-1 transition-colors"
-    :class="waiting ? 'border-amber-500/70' : working ? 'border-blue-600/60' : presence.online ? '' : 'opacity-55'"
-    @contextmenu="onContextmenu"
-  >
+  <Card class="flex flex-col gap-3 py-4 pb-1 transition-colors" @contextmenu="onContextmenu">
     <CardHeader class="px-4">
       <div class="flex items-center gap-2">
         <img v-if="logo" :src="logo" alt="" class="size-5 rounded object-contain" />
         <CardTitle class="text-sm font-medium">{{ presence.card.name }}</CardTitle>
-        <Badge
-          variant="outline"
-          class="ml-auto gap-1.5 line-clamp-1"
-          :class="waiting ? 'border-amber-500/70 text-amber-600' : working ? 'border-blue-500/60 text-blue-500' : staleOnly ? 'border-orange-500/70 text-orange-600' : ''"
-          :title="waiting ? '等待人工确认：' + waiting : working ? '执行中' : staleOnly ? '只有心跳、没有长轮询：看着在线但收不到任务，需重启 worker.sh' : presence.online ? '在线' : '离线'"
+        <span
+          class="ml-auto flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground"
+          :title="waiting ? '等待人工确认：' + waiting : working ? '执行中' : staleOnly ? '只有心跳、没有长轮询：看着在线但收不到任务，需重启 worker.sh' : presence.online ? '空闲' : '离线'"
         >
-          <span
-            class="size-1.5 rounded-full"
-            :class="waiting ? 'animate-pulse bg-amber-500' : working ? 'animate-pulse bg-blue-500' : staleOnly ? 'bg-orange-500' : presence.online ? 'bg-green-500' : 'bg-muted-foreground/40'"
-          />
-          {{ waiting ? '等人工' : working ? '执行中' : staleOnly ? '仅心跳·不领活' : presence.online ? '在线' : '离线' }}
-        </Badge>
+          <i class="size-2 rounded-full" :class="[dotClass, working && !waiting ? 'animate-pulse' : '']" />
+          {{ statusText }}
+        </span>
       </div>
       <button
         class="mt-2 flex items-center gap-1 text-left text-xl font-semibold leading-none hover:text-blue-500"
@@ -114,10 +127,15 @@ async function send() {
       </p>
       <p class="flex items-center gap-1 line-clamp-1 text-sm text-muted-foreground">
         <TrendingUp v-if="working" class="h-4 w-4 text-blue-500" />
-        {{ working ? '执行中 · ' + (presence.workingOn || '') : presence.online ? '空闲' : '离线' }}
+        {{ working ? (presence.workingOn || '执行中') : presence.online ? '可领取任务' : '不在线' }}
         <span v-if="(presence.queuedCount ?? 0) > 0" class="rounded bg-yellow-500/15 px-1.5 text-xs text-yellow-600">
           排队 {{ presence.queuedCount }}
         </span>
+      </p>
+      <!-- 待处理留言：不置执行态，只作提示 -->
+      <p v-if="presence.pendingMail" class="flex items-center gap-1 line-clamp-1 text-sm text-sky-500">
+        <Mail class="h-4 w-4 shrink-0" />
+        <span class="truncate" :title="presence.pendingMail">{{ presence.pendingMail }}</span>
       </p>
       <p class="text-xs text-muted-foreground/70">心跳 {{ time }}</p>
     </CardHeader>

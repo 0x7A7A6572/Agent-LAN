@@ -38,7 +38,7 @@ if (typeof window !== 'undefined') window.addEventListener('resize', syncIndicat
   <div class="pointer-events-none fixed inset-x-0 bottom-5 z-30 flex justify-center px-4">
     <div
       ref="railRef"
-      class="pointer-events-auto relative flex origin-bottom items-center gap-1.5 rounded-full border border-white/25 bg-background/60 p-2 shadow-[0_8px_32px_rgba(0,0,0,0.16),0_2px_8px_rgba(0,0,0,0.08),inset_0_1px_0_rgba(255,255,255,0.25)] backdrop-blur-2xl"
+      class="pointer-events-auto relative flex origin-bottom items-center gap-1.5 rounded-full border border-white/25 bg-background/60 p-2 shadow-[0_12px_48px_-8px_rgba(0,0,0,0.28),inset_0_1px_0_rgba(255,255,255,0.25)] backdrop-blur-2xl"
       style="transform: scale(0.8)"
     >
       <!-- 滑动指示器：一个元素表达"当前在哪"，避免每颗按钮各自高亮 -->

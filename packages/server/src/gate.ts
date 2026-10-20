@@ -1,11 +1,9 @@
 // 派发权门禁：调度控制流归 Supervisor，通信数据流放行
-// 关键约束：PM 失联必须自动降级，否则会半死不活地占着派发权
+// 关键约束：PM 接管期间只放行 PM 自己的派发与同工单返工，没有超时豁免
 
-export type DispatchMode = "human" | "pm" | "degraded";
+export type DispatchMode = "human" | "pm";
 
 export interface GateOptions {
-  /** pm 模式下 PM 连续多久没有成功决策判定降级 */
-  pmTimeoutMs: number;
   onLog?: (line: string) => void;
 }
 
@@ -33,19 +31,8 @@ export class DispatchGate {
   private mode: DispatchMode = "human";
   private lastPmBeat = 0;
   private pmName = "hub-pm";
-  private sweepTimer?: ReturnType<typeof setInterval>;
 
-  constructor(private opts: GateOptions) {}
-
-  start(): void {
-    this.sweepTimer = setInterval(() => this.sweep(), 5000);
-    this.sweepTimer.unref?.();
-  }
-
-  stop(): void {
-    if (this.sweepTimer) clearInterval(this.sweepTimer);
-    this.sweepTimer = undefined;
-  }
+  constructor(private opts: GateOptions = {}) {}
 
   get current(): DispatchMode {
     return this.mode;
@@ -53,6 +40,11 @@ export class DispatchGate {
 
   get pmNodeName(): string {
     return this.pmName;
+  }
+
+  /** 最近一次 PM 成功决策时间，仅用于观测，不参与放行判定 */
+  get lastBeat(): number {
+    return this.lastPmBeat;
   }
 
   /** 人类开启/关闭 PM 接管；人始终是最高权限 */
@@ -63,7 +55,7 @@ export class DispatchGate {
     this.opts.onLog?.("[gate] 派发权 " + before + " -> " + mode + " (by " + by + ")");
   }
 
-  /** PM 每次成功决策后续命；degraded 不自动恢复，需人确认 */
+  /** PM 每次成功决策后记一笔时间戳 */
   beat(): void {
     this.lastPmBeat = Date.now();
   }
@@ -75,7 +67,6 @@ export class DispatchGate {
       return { allow: true, mode: this.mode };
     }
     if (this.mode !== "pm") {
-      // human / degraded：不拦截
       return { allow: true, mode: this.mode };
     }
     // pm 模式：只有同工单内返工豁免
@@ -87,13 +78,5 @@ export class DispatchGate {
       mode: this.mode,
       reason: "PM 接管期间，跨工单派发必须经 Supervisor（当前发起方 " + req.actor + "）"
     };
-  }
-
-  private sweep(): void {
-    if (this.mode !== "pm") return;
-    if (Date.now() - this.lastPmBeat <= this.opts.pmTimeoutMs) return;
-    const idle = Math.round((Date.now() - this.lastPmBeat) / 1000);
-    this.mode = "degraded";
-    this.opts.onLog?.("[gate] PM " + idle + "s 无成功决策，派发权降级为 degraded（已放行，需人工恢复）");
   }
 }
