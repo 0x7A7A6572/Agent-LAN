@@ -24,7 +24,7 @@ export const saveRoles = (roles: RoleDef[]) =>
     method: 'PUT',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ roles }),
-  }).then(r => r.json() as Promise<{ ok: boolean; allowed?: string[]; error?: string }>)
+  }).then(r => r.json() as Promise<{ ok: boolean; allowed?: RoleDef[]; error?: string }>)
 
 export const setNodeRole = (name: string, role: string) =>
   fetch('/console/roles', {

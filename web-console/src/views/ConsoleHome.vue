@@ -21,7 +21,7 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import type { Order, OrderAttachment, OrderStatus } from '@/types/console'
+import type { Order, OrderAttachment, OrderStatus, RoleDef } from '@/types/console'
 
 const store = useConsoleStore()
 
@@ -90,14 +90,11 @@ async function onPickConfirm(role: string) {
   else log('[role] 修改失败: ' + r.error)
 }
 
-async function onRolesSave(names: string[]) {
-  // 角色库只改名字时保留原职责说明，避免编辑一次就把 desc 清空
-  const prev = new Map(store.roles.map(x => [x.name, x.desc]))
-  const roles = names.map(n => ({ name: n, desc: prev.get(n) ?? '' }))
+async function onRolesSave(roles: RoleDef[]) {
   const r = await saveRoles(roles)
   if (r.ok) {
     await store.refreshRoles()
-    log('[role] 角色库 -> ' + ((r.allowed ?? []).join(', ') || '（空）'))
+    log('[role] 角色库 -> ' + ((r.allowed ?? []).map(x => x.name).join(', ') || '（空）'))
   } else log('[role] 角色库保存失败')
 }
 
