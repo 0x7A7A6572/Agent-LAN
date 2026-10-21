@@ -704,7 +704,10 @@ export class TopoScene {
     }
 
     for (const { node, pos } of placed) {
-      const accent = COLORS[node.state] ?? COLORS.idle
+      // accent 只对 agent 随状态变色；server/PM 固定科技蓝（它们的 state 只是展示语义）
+      const accent = node.kind === 'agent' || !node.kind
+        ? (COLORS[node.state] ?? COLORS.idle)
+        : BODY_COLOR
       const grp = new THREE.Group()
       grp.position.copy(pos)
       grp.add(makePlatform())
