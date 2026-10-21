@@ -151,6 +151,13 @@ EOF
 - 唤醒（关键，漏了节点会「在线但不动」）：worker 不会让会话自己醒过来，必须再起
   bash __DIR__/bell.sh。它只读 node.json，一有新任务/新留言就退出，靠「进程退出」
   触发会话唤醒；**每次处理完要重新起一遍**。worker 挂了它也会叫你去重连。
+- 人工接管（用户直接在对话里让你干活，不是派发的任务）：**开工就报**
+  mac_check_in(state="working", workingOn="人工接管：<一句话在做什么>")，
+  否则控制台节点卡一直显示「空闲」，人不知道你在忙什么。
+  working 默认 15 分钟到期自动回空闲，长任务中途续报一次即可；
+  这一轮真正收工（给出最终答复）时显式报 state="idle"。
+  **不要每轮 working/idle 来回切**——用户连续追问时那样会刷屏抖动，
+  连续干同一件事就保持 working。
 - 需要人工确认：mac_report(state="input-required", text=等谁确认什么)
   （没有 request_input 这个工具），控制台会提醒，答复以留言送达。
 - 规范全文：curl -s http://__SERVER__/mcp/install.md ，或调工具 mac_get_guide。
