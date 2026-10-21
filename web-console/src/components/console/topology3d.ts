@@ -152,8 +152,8 @@ function glowTexture(kind: 'soft' | 'floor') {
 }
 
 /**
- * 节点任务牌：任务列表卡片。整块是硬边（无圆角、无描边）+ 左→右线性渐隐，
- * 与拓扑的硬切风格一致：靠「左侧竖条 + 上沿冷光」立住边界，右侧渐隐融入背景。
+ * 节点任务牌：任务列表卡片。整块是硬边（无圆角、无描边、左边不画光边）+ 左→右线性渐隐，
+ * 与拓扑的硬切风格一致：只在上沿留一道从左起亮的冷光，右侧渐隐融入背景。
  *   名称行   —— 白→灰蓝渐变
  *   运行中行 —— 蓝色渐变横条 + 脉冲点 + 蓝色渐变字
  *   排队行   —— 同一套硬边与渐变，压暗一档
@@ -203,17 +203,14 @@ function taskBoardTexture(
     return s + '…'
   }
 
-  // 底板：硬边 + 左→右线性渐变。拓扑是硬切风格，圆角卡片和描边在这里不成立，
-  // 所以用「左侧状态色竖条 + 上沿冷光」代替整圈 border。
+  // 底板：硬边 + 左→右线性渐变。拓扑是硬切风格，圆角卡片和描边在这里不成立；
+  // 边界只留上沿一道从左起亮的冷光，左边不画光边（整块靠渐变自身的浓度差立住）。
   const bg = ctx.createLinearGradient(0, 0, W, 0)
   bg.addColorStop(0, 'rgba(9,18,34,0.92)')
   bg.addColorStop(0.55, 'rgba(8,15,29,0.74)')
   bg.addColorStop(1, 'rgba(7,12,24,0.30)')
   ctx.fillStyle = bg
   ctx.fillRect(0, 0, W, H)
-
-  ctx.fillStyle = 'rgba(63,182,255,0.85)'
-  ctx.fillRect(0, 0, 3, H)
 
   const topLine = ctx.createLinearGradient(0, 0, W, 0)
   topLine.addColorStop(0, 'rgba(96,178,255,0.55)')
