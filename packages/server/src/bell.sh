@@ -29,6 +29,7 @@ set -u
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DIR="${MAC_DIR:-$SELF_DIR}"
 NJ="$DIR/node.json"
+SEEN="$DIR/.bell.seen.json"
 INTERVAL="${BELL_INTERVAL:-2}"
 STALE_SEC="${BELL_STALE_SEC:-120}"
 FLAG="$DIR/.bell.stale.notified"
@@ -42,78 +43,99 @@ if [ -z "$PY" ]; then
   exit 4
 fi
 
-# 签名只覆盖「会变且值得叫醒」的部分：working 的 taskId+since、pending 的 id 集合、
-# 留言条数与末条时间。刻意不包含 state.updatedAt —— 它每轮轮询都变，会把门铃变成噪音。
-sig() {
-  "$PY" - "$NJ" <<'PY' 2>/dev/null
-import json, sys, hashlib
-try:
-    d = json.load(open(sys.argv[1], encoding="utf-8"))
-except Exception:
-    print("NA"); raise SystemExit
-st = d.get("state") or {}
-w = st.get("working") or {}
-pend = [str(x.get("taskId") or "") for x in (st.get("pending") or [])]
-msg = [str(m.get("at") or "") for m in (st.get("messages") or [])]
-key = "|".join([str(w.get("taskId") or ""), str(w.get("since") or ""),
-                ",".join(pend), str(len(msg)), msg[-1] if msg else ""])
-print(hashlib.sha1(key.encode()).hexdigest()[:12])
-PY
-}
-
-# 只输出 ASCII 摘要：Windows 控制台码页会把中文打乱，详情一律回读 node.json
-detail() {
-  "$PY" - "$NJ" <<'PY' 2>/dev/null
-import json, sys
-try:
-    d = json.load(open(sys.argv[1], encoding="utf-8"))
-except Exception:
-    print("BELL: node.json unreadable"); raise SystemExit
-st = d.get("state") or {}
-w = st.get("working") or {}
-print("BELL: HIT node=%s working=%s since=%s pending=%d messages=%d"
-      % (d.get("name"), w.get("taskId") or "-", w.get("since") or "-",
-         len(st.get("pending") or []), len(st.get("messages") or [])))
-PY
-}
-
-# state.updatedAt 距今秒数；解析失败回 0（视为新鲜），避免误判死
-age() {
-  "$PY" - "$NJ" <<'PY' 2>/dev/null
+# 判定「有没有新活」，并把当前状态记进 .bell.seen.json。
+#
+# 关键：不能只比「状态签名有没有变」——那样「任务被清空（上报完成）」也是变化，
+# 于是每干完一件活就被自己叫醒一次。这里只认三种**新增**：
+#   1) working 换了一个新 taskId（派了新活）
+#   2) pending 里出现没见过的 taskId（排队增加）
+#   3) 留言条数变多
+# 任务完成、pending 减少、留言未增，一律不算新活，只更新 seen 基线。
+#
+# 输出一行 ASCII（Windows 控制台码页会把中文打乱，详情请回读 node.json）：
+#   HIT <reason> node=… working=… pending=N messages=N
+#   STALE <age>s …
+#   NOHIT
+decide() {
+  "$PY" - "$NJ" "$SEEN" "$STALE_SEC" <<'PY' 2>/dev/null
 import json, sys, datetime
+
+nj, seen_p, stale = sys.argv[1], sys.argv[2], int(sys.argv[3])
 try:
-    d = json.load(open(sys.argv[1], encoding="utf-8"))
-    ts = (d.get("state") or {}).get("updatedAt")
-    t = datetime.datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
-    print(int((datetime.datetime.now(datetime.timezone.utc) - t).total_seconds()))
+    cur = json.load(open(nj, encoding="utf-8"))
 except Exception:
-    print(0)
+    print("NOHIT"); raise SystemExit
+
+st = cur.get("state") or {}
+w = str((st.get("working") or {}).get("taskId") or "")
+pend = [str(x.get("taskId") or "") for x in (st.get("pending") or [])]
+msgs = len(st.get("messages") or [])
+
+try:
+    seen = json.load(open(seen_p, encoding="utf-8"))
+except Exception:
+    seen = None
+
+hit, reason = False, ""
+if seen is not None:
+    if w and w != str(seen.get("working") or ""):
+        hit, reason = True, "task"
+    elif any(p not in (seen.get("pending") or []) for p in pend):
+        hit, reason = True, "queued"
+    elif msgs > int(seen.get("msgs") or 0):
+        hit, reason = True, "message"
+
+try:
+    json.dump({"working": w, "pending": pend, "msgs": msgs},
+              open(seen_p, "w", encoding="utf-8"))
+except Exception:
+    pass
+
+detail = "node=%s working=%s pending=%d messages=%d" % (
+    cur.get("name"), w or "-", len(pend), msgs)
+
+if hit:
+    print("HIT %s %s" % (reason, detail))
+    raise SystemExit
+
+# 静默守卫：state.updatedAt 长时间不刷新 ⇒ worker 已死，叫会话去重连
+try:
+    t = datetime.datetime.fromisoformat(str(st.get("updatedAt")).replace("Z", "+00:00"))
+    age = int((datetime.datetime.now(datetime.timezone.utc) - t).total_seconds())
+except Exception:
+    age = 0
+if age > stale:
+    print("STALE %ds %s" % (age, detail))
+else:
+    print("NOHIT")
 PY
 }
 
-BASE="$(sig)"
-echo "BELL: armed dir=$DIR baseline=$BASE interval=${INTERVAL}s stale=${STALE_SEC}s"
+# 启动即判定一次：如果此刻已经有未处理的活（离线期间攒下的），直接叫醒，不空等
+
+BASE="$(decide)"
+echo "BELL: armed dir=$DIR interval=${INTERVAL}s stale=${STALE_SEC}s"
+case "$BASE" in
+  HIT*) echo "$BASE"; exit 0 ;;   # 启动瞬间就有未处理的活，直接叫醒
+esac
 rm -f "$FLAG" 2>/dev/null
 
 while :; do
   sleep "$INTERVAL"
-  NOW="$(sig)"
+  OUT="$(decide)"
 
-  if [ -z "$NOW" ] || [ "$NOW" = "NA" ]; then continue; fi
-
-  if [ "$NOW" != "$BASE" ]; then
-    detail
-    exit 0
-  fi
-
-  # 静默守卫：state 长时间不刷新说明 worker 已不在，叫醒会话去重连（只报一次）
-  if [ -f "$NJ" ] && [ ! -f "$FLAG" ]; then
-    A="$(age)"
-    case "$A" in ''|*[!0-9]*) A=0 ;; esac
-    if [ "$A" -gt "$STALE_SEC" ]; then
-      echo "BELL: STALE state.updatedAt ${A}s 未更新，worker 疑似已死，请重连"
-      : > "$FLAG"
-      exit 3
-    fi
-  fi
+  case "$OUT" in
+    HIT*)
+      echo "BELL: $OUT"
+      exit 0
+      ;;
+    STALE*)
+      # 静默守卫：只报一次，避免 worker 长时间不在时反复叫醒会话
+      if [ ! -f "$FLAG" ]; then
+        echo "BELL: $OUT —— worker 疑似已死，请重连"
+        : > "$FLAG"
+        exit 3
+      fi
+      ;;
+  esac
 done
