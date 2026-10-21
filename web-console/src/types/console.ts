@@ -33,6 +33,8 @@ export interface Presence {
   mcpActive?: boolean
   agent?: string
   queuedCount?: number
+  /** 排队任务摘要列表（最多5条），3D 拓扑任务牌逐条显示 */
+  queuedItems?: string[]
 }
 
 /** 派发权状态：human 人工模式 / pm PM 接管 */

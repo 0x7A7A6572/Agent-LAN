@@ -20,6 +20,12 @@ export interface TopoNode {
   workingOn?: string
   /** 挂在该节点身上的任务数 */
   taskCount?: number
+  /** 正在运行任务摘要（节点常驻显示），有值即显示「运行」行 */
+  running?: string
+  /** 待执行任务数（节点常驻显示），>0 显示「待 N」 */
+  queued?: number
+  /** 排队任务摘要列表，任务牌逐条显示（超过3条折叠为 +N） */
+  queuedItems?: string[]
   /**
    * 造型类别。造型只认这个字段，不按 role 文本猜——
    * role 是人维护的、随时会改（把「测试」改成别的就变形），且 role 相同的人本就该长得一样。
@@ -51,10 +57,10 @@ export interface TopoData {
   flows: TopoFlow[]
 }
 
-/** 状态色沿用控制台原版：绿空闲 蓝执行 琥珀等人工 灰离线 */
+/** 状态色沿用控制台原版：绿空闲 橙执行 琥珀等人工 灰离线（work 改橙与任务牌运行条一致） */
 const COLORS = {
   idle: 0x3ddc97,
-  work: 0x3aa8ff,
+  work: 0xff9a2e,
   wait: 0xffb340,
   off: 0x6b7d95,
   wire: 0x2f86d8,
@@ -64,6 +70,11 @@ const COLORS = {
 const BODY_COLOR = 0x3d9fe8
 
 const STATE_TXT: Record<string, string> = { idle: '空闲', work: '执行中', wait: '等人工', off: '离线' }
+// 主体基色：仅 agent 节点 work 态橙体；server/PM 固定科技蓝，
+// 它们的 state 只是展示语义，不代表「在干活」
+function bodyColorOf(node: TopoNode): number {
+  return node.kind === 'agent' && node.state === 'work' ? 0xff8c1a : BODY_COLOR
+}
 
 /** hub-center 以外的节点都归成一个"局域网主机"簇 */
 const LOCAL_HOST = 'local'
@@ -140,9 +151,120 @@ function glowTexture(kind: 'soft' | 'floor') {
   return tex
 }
 
+/**
+ * 节点任务牌：任务列表卡片。每条任务一个圆角 item：
+ * 运行中=橙色边框+脉冲点+橙字；排队=灰蓝 item。内容变化才重绘（按内容键缓存）
+ */
+/** 任务牌产物：纹理 + 高宽比（调用方按比例定尺寸） */
+interface BoardTex {
+  tex: THREE.CanvasTexture
+  aspect: number
+}
+const boardFullCache = new Map<string, BoardTex>()
+function taskBoardTexture(
+  name: string,
+  running: string | undefined,
+  queuedItems: string[] | undefined,
+): BoardTex {
+  const items = queuedItems ?? []
+  const extra = Math.max(0, items.length - 3)
+  const shown = items.slice(0, 3)
+  const clip = (s: string, n: number) => (s.length > n ? s.slice(0, n) + '…' : s)
+  const key = name + '|' + (running ?? '') + '|' + items.join('|') + '|' + extra
+  const cached = boardFullCache.get(key)
+  if (cached) return cached
+
+  const W = 560
+  const ROW = 64
+  const PAD = 24
+  const rows: { text: string; kind: 'name' | 'run' | 'queued' | 'more' }[] = [
+    { text: name.length > 20 ? name.slice(0, 20) + '…' : name, kind: 'name' },
+  ]
+  if (running) rows.push({ text: clip(running, 16), kind: 'run' })
+  for (const it of shown) rows.push({ text: clip(it, 16), kind: 'queued' })
+  if (extra > 0) rows.push({ text: '… 还有 ' + extra + ' 条', kind: 'more' })
+
+  const H = PAD + rows.length * ROW + PAD - 14
+  const canvas = document.createElement('canvas')
+  canvas.width = W
+  canvas.height = H
+  const ctx = canvas.getContext('2d')!
+
+  // 整卡深底：毛玻璃感，弱边框
+  ctx.fillStyle = 'rgba(7,13,26,0.82)'
+  ctx.strokeStyle = 'rgba(70,110,160,0.45)'
+  ctx.lineWidth = 2
+  const r = 20
+  ctx.beginPath()
+  ctx.roundRect(4, 4, W - 8, H - 8, r)
+  ctx.fill()
+  ctx.stroke()
+
+  const itemR = 14
+  let y = PAD
+  for (const row of rows) {
+    if (row.kind === 'name') {
+      ctx.font = '600 28px system-ui, sans-serif'
+      ctx.fillStyle = 'rgba(168,192,222,0.95)'
+      ctx.textAlign = 'left'
+      ctx.textBaseline = 'middle'
+      ctx.fillText(row.text, 30, y + ROW / 2 - 4)
+    } else if (row.kind === 'run') {
+      // 运行中 item：橙描边圆角条 + 脉冲点 + 橙字
+      const h = ROW - 16
+      ctx.fillStyle = 'rgba(60,32,8,0.65)'
+      ctx.strokeStyle = 'rgba(255,168,60,0.85)'
+      ctx.lineWidth = 2.5
+      ctx.beginPath()
+      ctx.roundRect(22, y, W - 44, h, itemR)
+      ctx.fill()
+      ctx.stroke()
+      // 脉冲点
+      ctx.beginPath()
+      ctx.arc(50, y + h / 2, 7, 0, Math.PI * 2)
+      ctx.fillStyle = '#ffb040'
+      ctx.fill()
+      ctx.font = '600 30px system-ui, sans-serif'
+      ctx.fillStyle = '#ffc861'
+      ctx.textAlign = 'left'
+      ctx.fillText(row.text, 68, y + h / 2 + 1)
+    } else if (row.kind === 'queued') {
+      // 排队 item：灰蓝低调条
+      const h = ROW - 18
+      ctx.fillStyle = 'rgba(24,38,60,0.7)'
+      ctx.strokeStyle = 'rgba(70,110,160,0.35)'
+      ctx.lineWidth = 1.5
+      ctx.beginPath()
+      ctx.roundRect(22, y, W - 44, h, itemR)
+      ctx.fill()
+      ctx.stroke()
+      ctx.font = '500 27px system-ui, sans-serif'
+      ctx.fillStyle = 'rgba(150,180,215,0.92)'
+      ctx.textAlign = 'left'
+      ctx.fillText(row.text, 52, y + h / 2 + 1)
+    } else {
+      // 折叠行
+      ctx.font = '500 26px system-ui, sans-serif'
+      ctx.fillStyle = 'rgba(130,155,185,0.75)'
+      ctx.textAlign = 'left'
+      ctx.fillText(row.text, 52, y + ROW / 2 - 8)
+    }
+    y += ROW
+  }
+
+  const tex = new THREE.CanvasTexture(canvas)
+  tex.colorSpace = THREE.SRGBColorSpace
+  // 缓存上限防长跑泄漏
+  if (boardFullCache.size > 60) {
+    const first = boardFullCache.keys().next().value
+    if (first !== undefined) boardFullCache.delete(first)
+  }
+  boardFullCache.set(key, { tex, aspect: H / W })
+  return { tex, aspect: H / W }
+}
+
 /** 节点脚下的深灰哑光托板，本身不发光 */
-function makePlatform(size = 5.2) {
-  const grp = new THREE.Group()
+function makePlatform(size = 5.2) {  const grp = new THREE.Group()
   const H = 0.62
   const base = new THREE.Mesh(
     new THREE.BoxGeometry(size, H, size),
@@ -569,11 +691,27 @@ export class TopoScene {
     for (const [host, list] of byHost) {
       const center = hostPos.get(host) ?? new THREE.Vector3()
       if (host === LOCAL_HOST) {
-        // 横向排开，间距固定，节点多了向两侧延伸
-        const GAP = 9
-        const startX = -((list.length - 1) * GAP) / 2
-        list.forEach((n, i) => {
-          placed.push({ node: n, pos: new THREE.Vector3(center.x + startX + i * GAP, 0, center.z) })
+        // 环绕中心：节点每 3 个并排成一小簇，簇沿环分布——
+        // 单纯一人一圈太散，并排紧凑且仍保持环绕主服务的整体形态
+        const online = list.filter((n) => n.state !== 'off')
+        const offline = list.filter((n) => n.state === 'off')
+        const clusters: TopoNode[][] = []
+        for (let i = 0; i < online.length; i += 3) clusters.push(online.slice(i, i + 3))
+        // 离线节点单独归一簇，摆在环上空档
+        if (offline.length) clusters.push(offline)
+        const RAD = Math.max(16, 4 + clusters.length * 7)
+        const GAP = 8
+        clusters.forEach((cluster, ci) => {
+          const ang = (ci / Math.max(1, clusters.length)) * Math.PI * 2 - Math.PI / 2
+          const cx = Math.cos(ang) * RAD
+          const cz = Math.sin(ang) * RAD * 0.78
+          const sx = -((cluster.length - 1) * GAP) / 2
+          // 簇内并排：沿环切线方向排开，视觉上贴着环
+          const tx = -Math.sin(ang)
+          const tz = Math.cos(ang) * 0.78
+          cluster.forEach((n, i) => {
+            placed.push({ node: n, pos: new THREE.Vector3(cx + tx * (sx + i * GAP), 0, cz + tz * (sx + i * GAP)) })
+          })
         })
         continue
       }
@@ -591,7 +729,7 @@ export class TopoScene {
       grp.add(makePlatform())
 
       // 主体固定蓝，accent 只决定缝隙与点光的颜色
-      const body = shapeFor(node)(BODY_COLOR)
+      const body = shapeFor(node)(bodyColorOf(node))
       body.position.y = 2.35
       applyAccent(body, accent)
       grp.add(body)
@@ -603,19 +741,28 @@ export class TopoScene {
         grp.add(inner)
       }
 
-      // 悬浮光柱，制造「浮起来」的观感
-      const beam = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.04, 0.16, 1.6, 10, 1, true),
-        new THREE.MeshBasicMaterial({
-          color: accent,
-          transparent: true,
-          opacity: 0.28,
-          blending: THREE.AdditiveBlending,
-          side: THREE.DoubleSide,
-        }),
-      )
-      beam.position.y = 1.15
-      grp.add(beam)
+      // 任务牌：仅「有活」时出现——运行中或排队>0，空闲节点不挂牌。
+      const boardItems = node.queuedItems ?? []
+      const hasBoard = node.kind === 'agent' && (node.running || boardItems.length > 0)
+      if (hasBoard) {
+        const { tex, aspect } = taskBoardTexture(node.label ?? node.id, node.running, boardItems)
+        const bw = 7.5
+        const board = new THREE.Sprite(
+          new THREE.SpriteMaterial({
+            map: tex,
+            transparent: true,
+            depthWrite: false,
+          }),
+        )
+        // 高度按内容行数自适应（纹理宽高比）
+        board.scale.set(bw, bw * aspect, 1)
+        // 沿「环心→节点」方向外推 3 单位，牌悬在节点外侧上空
+        const outDir = new THREE.Vector3(pos.x, 0, pos.z)
+        if (outDir.lengthSq() > 0.01) outDir.normalize()
+        board.position.copy(outDir.multiplyScalar(3))
+        board.position.y = 8 + (bw * aspect) / 2
+        grp.add(board)
+      }
 
       this.nodeLayer.add(grp)
 

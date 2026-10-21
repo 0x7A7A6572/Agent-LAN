@@ -123,6 +123,14 @@ worker 常驻不退出，命中任务/留言时把完整 JSON 打到 stdout 并�
 - **consumed 标记**：会话处理完某条留言后，把 node.json 里对应 message 的
   `consumed` 置 true；worker 下轮合并留言时按 (at,text) 去重、不覆盖该标记。
   未标 consumed 的留言视为待处理。
+- **人工接管上报（必守）**：会话与用户手工协作（改代码/排查/写文档，
+  不走工单通道）时，开工先 mac_check_in 上报执行态，干完复位：
+
+      mac_check_in({ "name": "<节点名>", "state": "working", "workingOn": "人工接管：<一句摘要>" })
+      mac_check_in({ "name": "<节点名>", "state": "idle" })
+
+  不报则控制台卡片一直显示「空闲」——明明满负荷干活却是假空闲。
+  `working` 15 分钟自动过期，长活每 10 分钟续报一次。
 - state 以 hub 为唯一事实源，worker 不自行猜测；写失败保留上轮值。
 
 **上报方式**：

@@ -97,6 +97,9 @@ const topoData = computed<TopoData>(() => {
     state: stateOf(p),
     host: p.groupHost || p.card.host || p.card.url || 'default',
     workingOn: p.workingOn,
+    running: p.workingOn,
+    queued: p.queuedCount,
+    queuedItems: p.queuedItems,
     taskCount: props.orders.filter(
       (o) => o.assignee === p.card.name && o.status !== 'done' && o.status !== 'canceled',
     ).length,

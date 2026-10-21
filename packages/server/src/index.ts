@@ -840,12 +840,17 @@ export function createServer(options: ServerOptions): http.Server {
     }
     return task.prompt.slice(0, 24) + (task.prompt.length > 24 ? "…" : "");
   };
-  // 名册快照附带 hub 侧角色与排队任务数：控制台据此展示与选人
+  // 名册快照附带 hub 侧角色与排队任务数：控制台据此展示与选人。
+  // queuedItems：排队任务摘要列表，3D 拓扑的任务牌逐条显示用
   const withRoles = (list: AgentPresence[]) =>
     list.map(p => ({
       ...p,
       role: roleStore.get(p.card.name) || undefined,
       queuedCount: pullQueues.get(p.card.name)?.length ?? 0,
+      queuedItems: (pullQueues.get(p.card.name) ?? [])
+        .filter(t => !isTerminal(t.state))
+        .slice(0, 5)
+        .map(t => workingOnOf(t)),
       pendingMail: mailOf(p.card.name)
     }));
   // 落盘是防抖的：退出前同步 flush，防尾写丢失

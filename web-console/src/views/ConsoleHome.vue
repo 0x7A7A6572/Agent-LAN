@@ -191,7 +191,7 @@ function openRedispatch(order: Order) {
           class="flex flex-col gap-4 lg:h-[calc(100vh-12rem)] lg:flex-row"
         >
           <!-- 详情列：窄栏纵向滚动，承载留言/删节点等操作 -->
-          <aside class="flex min-h-[280px] shrink-0 flex-col gap-3 lg:w-1/5 lg:min-w-[240px]">
+          <aside class="flex min-h-[280px] shrink-0 flex-col gap-3 lg:w-1/5 lg:min-w-[300px]">
             <div class="flex items-center gap-2">
               <span class="text-xs font-medium text-muted-foreground">节点详情</span>
               <Badge variant="outline" class="text-[10px]">{{ store.presences.length }}</Badge>
