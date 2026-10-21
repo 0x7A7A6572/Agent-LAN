@@ -152,8 +152,12 @@ function glowTexture(kind: 'soft' | 'floor') {
 }
 
 /**
- * 节点任务牌：任务列表卡片。每条任务一个圆角 item：
- * 运行中=橙色边框+脉冲点+橙字；排队=灰蓝 item。内容变化才重绘（按内容键缓存）
+ * 节点任务牌：任务列表卡片。整块是硬边（无圆角、无描边）+ 左→右线性渐隐，
+ * 与拓扑的硬切风格一致：靠「左侧竖条 + 上沿冷光」立住边界，右侧渐隐融入背景。
+ *   名称行   —— 白→灰蓝渐变
+ *   运行中行 —— 蓝色渐变横条 + 脉冲点 + 蓝色渐变字
+ *   排队行   —— 同一套硬边与渐变，压暗一档
+ * 内容变化才重绘（按内容键缓存）
  */
 /** 任务牌产物：纹理 + 高宽比（调用方按比例定尺寸） */
 interface BoardTex {
@@ -169,7 +173,6 @@ function taskBoardTexture(
   const items = queuedItems ?? []
   const extra = Math.max(0, items.length - 3)
   const shown = items.slice(0, 3)
-  const clip = (s: string, n: number) => (s.length > n ? s.slice(0, n) + '…' : s)
   const key = name + '|' + (running ?? '') + '|' + items.join('|') + '|' + extra
   const cached = boardFullCache.get(key)
   if (cached) return cached
@@ -178,10 +181,10 @@ function taskBoardTexture(
   const ROW = 64
   const PAD = 24
   const rows: { text: string; kind: 'name' | 'run' | 'queued' | 'more' }[] = [
-    { text: name.length > 20 ? name.slice(0, 20) + '…' : name, kind: 'name' },
+    { text: name, kind: 'name' },
   ]
-  if (running) rows.push({ text: clip(running, 16), kind: 'run' })
-  for (const it of shown) rows.push({ text: clip(it, 16), kind: 'queued' })
+  if (running) rows.push({ text: running, kind: 'run' })
+  for (const it of shown) rows.push({ text: it, kind: 'queued' })
   if (extra > 0) rows.push({ text: '… 还有 ' + extra + ' 条', kind: 'more' })
 
   const H = PAD + rows.length * ROW + PAD - 14
@@ -189,65 +192,85 @@ function taskBoardTexture(
   canvas.width = W
   canvas.height = H
   const ctx = canvas.getContext('2d')!
+  ctx.textAlign = 'left'
+  ctx.textBaseline = 'middle'
 
-  // 整卡深底：毛玻璃感，弱边框
-  ctx.fillStyle = 'rgba(7,13,26,0.82)'
-  ctx.strokeStyle = 'rgba(70,110,160,0.45)'
-  ctx.lineWidth = 2
-  const r = 20
-  ctx.beginPath()
-  ctx.roundRect(4, 4, W - 8, H - 8, r)
-  ctx.fill()
-  ctx.stroke()
+  // 按像素宽度截断：中英混排不能按字数估，字体必须先设好再调
+  const fit = (text: string, maxW: number) => {
+    if (ctx.measureText(text).width <= maxW) return text
+    let s = text
+    while (s.length > 1 && ctx.measureText(s + '…').width > maxW) s = s.slice(0, -1)
+    return s + '…'
+  }
 
-  const itemR = 14
+  // 底板：硬边 + 左→右线性渐变。拓扑是硬切风格，圆角卡片和描边在这里不成立，
+  // 所以用「左侧状态色竖条 + 上沿冷光」代替整圈 border。
+  const bg = ctx.createLinearGradient(0, 0, W, 0)
+  bg.addColorStop(0, 'rgba(9,18,34,0.92)')
+  bg.addColorStop(0.55, 'rgba(8,15,29,0.74)')
+  bg.addColorStop(1, 'rgba(7,12,24,0.30)')
+  ctx.fillStyle = bg
+  ctx.fillRect(0, 0, W, H)
+
+  ctx.fillStyle = 'rgba(63,182,255,0.85)'
+  ctx.fillRect(0, 0, 3, H)
+
+  const topLine = ctx.createLinearGradient(0, 0, W, 0)
+  topLine.addColorStop(0, 'rgba(96,178,255,0.55)')
+  topLine.addColorStop(1, 'rgba(96,178,255,0)')
+  ctx.fillStyle = topLine
+  ctx.fillRect(0, 0, W, 2)
+
   let y = PAD
   for (const row of rows) {
     if (row.kind === 'name') {
       ctx.font = '600 28px system-ui, sans-serif'
-      ctx.fillStyle = 'rgba(168,192,222,0.95)'
-      ctx.textAlign = 'left'
-      ctx.textBaseline = 'middle'
-      ctx.fillText(row.text, 30, y + ROW / 2 - 4)
+      const ng = ctx.createLinearGradient(30, 0, W - 60, 0)
+      ng.addColorStop(0, 'rgba(226,240,255,0.98)')
+      ng.addColorStop(1, 'rgba(150,182,218,0.72)')
+      ctx.fillStyle = ng
+      ctx.fillText(fit(row.text, W - 30 - 24), 30, y + ROW / 2 - 4)
     } else if (row.kind === 'run') {
-      // 运行中 item：橙描边圆角条 + 脉冲点 + 橙字
-      const h = ROW - 16
-      ctx.fillStyle = 'rgba(60,32,8,0.65)'
-      ctx.strokeStyle = 'rgba(255,168,60,0.85)'
-      ctx.lineWidth = 2.5
-      ctx.beginPath()
-      ctx.roundRect(22, y, W - 44, h, itemR)
-      ctx.fill()
-      ctx.stroke()
+      // 运行中 item：硬边横条 + 左→右蓝色渐变，任务文字同样是蓝色渐变
+      const h = ROW - 14
+      const g = ctx.createLinearGradient(20, 0, W - 20, 0)
+      g.addColorStop(0, 'rgba(28,104,178,0.58)')
+      g.addColorStop(0.6, 'rgba(18,64,116,0.28)')
+      g.addColorStop(1, 'rgba(12,36,66,0.00)')
+      ctx.fillStyle = g
+      ctx.fillRect(20, y, W - 40, h)
+      ctx.fillStyle = 'rgba(90,200,255,0.95)'
+      ctx.fillRect(20, y, 3, h)
       // 脉冲点
       ctx.beginPath()
-      ctx.arc(50, y + h / 2, 7, 0, Math.PI * 2)
-      ctx.fillStyle = '#ffb040'
+      ctx.arc(50, y + h / 2, 6, 0, Math.PI * 2)
+      ctx.fillStyle = '#5fd0ff'
       ctx.fill()
       ctx.font = '600 30px system-ui, sans-serif'
-      ctx.fillStyle = '#ffc861'
-      ctx.textAlign = 'left'
-      ctx.fillText(row.text, 68, y + h / 2 + 1)
+      const tg = ctx.createLinearGradient(68, 0, W - 40, 0)
+      tg.addColorStop(0, '#eaf8ff')
+      tg.addColorStop(0.5, '#9dd8ff')
+      tg.addColorStop(1, '#4aa8ee')
+      ctx.fillStyle = tg
+      ctx.fillText(fit(row.text, W - 68 - 24), 68, y + h / 2 + 1)
     } else if (row.kind === 'queued') {
-      // 排队 item：灰蓝低调条
+      // 排队 item：同一套硬边与渐变，只压暗一档，靠蓝的浓度区分先后
       const h = ROW - 18
-      ctx.fillStyle = 'rgba(24,38,60,0.7)'
-      ctx.strokeStyle = 'rgba(70,110,160,0.35)'
-      ctx.lineWidth = 1.5
-      ctx.beginPath()
-      ctx.roundRect(22, y, W - 44, h, itemR)
-      ctx.fill()
-      ctx.stroke()
+      const g = ctx.createLinearGradient(20, 0, W - 20, 0)
+      g.addColorStop(0, 'rgba(26,74,126,0.42)')
+      g.addColorStop(1, 'rgba(10,26,48,0.00)')
+      ctx.fillStyle = g
+      ctx.fillRect(20, y, W - 40, h)
+      ctx.fillStyle = 'rgba(104,168,228,0.60)'
+      ctx.fillRect(20, y, 3, h)
       ctx.font = '500 27px system-ui, sans-serif'
-      ctx.fillStyle = 'rgba(150,180,215,0.92)'
-      ctx.textAlign = 'left'
-      ctx.fillText(row.text, 52, y + h / 2 + 1)
+      ctx.fillStyle = 'rgba(158,196,232,0.94)'
+      ctx.fillText(fit(row.text, W - 52 - 24), 52, y + h / 2 + 1)
     } else {
       // 折叠行
       ctx.font = '500 26px system-ui, sans-serif'
       ctx.fillStyle = 'rgba(130,155,185,0.75)'
-      ctx.textAlign = 'left'
-      ctx.fillText(row.text, 52, y + ROW / 2 - 8)
+      ctx.fillText(fit(row.text, W - 52 - 24), 52, y + ROW / 2 - 8)
     }
     y += ROW
   }
@@ -1034,6 +1057,18 @@ export class TopoScene {
       target: this.controls.target.toArray() as [number, number, number],
       flying: this.flight !== null,
     }
+  }
+
+  /** 某节点任务牌的原始纹理画布（排障/端到端验证用，便于按像素核对排版与渐变） */
+  boardCanvas(id: string): HTMLCanvasElement | null {
+    const n = this.nodes.get(id)
+    if (!n) return null
+    for (const c of n.grp.children) {
+      if (!(c instanceof THREE.Sprite)) continue
+      const mat = c.material as THREE.SpriteMaterial
+      if (mat.map?.image instanceof HTMLCanvasElement) return mat.map.image
+    }
+    return null
   }
 
   /** 某节点投影到屏幕的归一化坐标（-1..1，0,0 = 画面正中），验证导航落点用 */

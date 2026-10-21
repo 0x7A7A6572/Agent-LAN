@@ -202,6 +202,9 @@ onMounted(async () => {
       camera: () => s.cameraState(),
       project: (id: string) => s.projectNode(id),
       nodes: () => s.data().nodes.map((n) => ({ id: n.id, label: n.label })),
+      focus: (id: string | null) => s.focusNode(id, 22),
+      // 任务牌原始画布转 dataURL：按像素核对渐变方向与硬边排版
+      board: (id: string) => s.boardCanvas(id)?.toDataURL('image/png') ?? null,
     }
   }
   // 组件挂载前点过节点卡：场景就绪后补一次导航
