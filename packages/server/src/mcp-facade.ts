@@ -303,7 +303,8 @@ const TOOLS = [
       properties: {
         id: { type: "string" },
         name: { type: "string" },
-        contentBase64: { type: "string" }
+        contentBase64: { type: "string" },
+        by: { type: "string", description: "你的节点名，timeline 归因" }
       },
       required: ["id", "name", "contentBase64"]
     }
@@ -320,6 +321,76 @@ function toolResult(data: unknown): unknown {
   return {
     content: [{ type: "text", text: JSON.stringify(data, null, 2) }]
   };
+}
+
+// ─── D11：参数校验（此前 facade 只「声明」inputSchema，从不校验）─────────────────
+//
+// 缺陷复盘：调用方把 `id` 写成 `orderId` 时，`a.id` 取到 undefined，
+// 业务层于是回一句「工单不存在: undefined」——既不说真实错因，也无法与
+// 「工单真的不存在」区分。同类坑 `dataBase64`（应为 contentBase64）更坏：
+// 静默传空内容、连错都不报。两者都是「接口对错名字段一律静默忽略」的后果，
+// 所以校验必须在入口统一做，而不是散落在各 handler 里。
+
+/** 参数错误统一用 -32602（MCP/JSON-RPC 的 Invalid params） */
+function paramError(message: string): Error & { code: number } {
+  return Object.assign(new Error(message), { code: -32602 });
+}
+
+/** 从末位往前数两个串的共同后缀长度 */
+function commonSuffixLen(a: string, b: string): number {
+  let i = 0;
+  while (i < a.length && i < b.length && a[a.length - 1 - i] === b[b.length - 1 - i]) i++;
+  return i;
+}
+
+/**
+ * 给写错的字段名猜一个正确的名字（只用于提示，**不做自动改名**）。
+ * 自动纠正会把调用方的错误永久掩盖住，正是本缺陷的成因。
+ */
+function suggestField(unknown: string, known: string[]): string | undefined {
+  const u = unknown.toLowerCase();
+  let best: { field: string; score: number } | undefined;
+  for (const field of known) {
+    const k = field.toLowerCase();
+    if (k === u) return field; // 只有大小写不同，如 taskID -> taskId
+    const contains = k.includes(u) || u.includes(k) ? 25 : 0;
+    const score = Math.max(commonSuffixLen(k, u) * 10, contains);
+    if (score >= 20 && (!best || score > best.score)) best = { field, score };
+  }
+  return best?.field;
+}
+
+/** 按 TOOLS 里声明的 inputSchema 做运行期校验；不合法就抛 -32602 */
+function validateArgs(toolName: string, schema: unknown, args: unknown): void {
+  const s = (schema ?? {}) as { properties?: Record<string, unknown>; required?: string[] };
+  const known = Object.keys(s.properties ?? {});
+  const supported = known.length ? known.join(", ") : "（无）";
+
+  // 参数本身必须是对象：JSON-RPC 允许省略，但给了 null/数组/字符串就是调错了
+  if (args === null || typeof args !== "object" || Array.isArray(args)) {
+    throw paramError(toolName + " 的 arguments 必须是对象；支持的参数：" + supported);
+  }
+  const a = args as Record<string, unknown>;
+
+  // ① 未知字段优先报 —— 调用方最想知道的往往是「我这个键名是不是写错了」。
+  //    也正因为优先，`mac_upload_file({"dataBase64":..})` 报的是「未知参数 dataBase64」
+  //    而不是「缺少 name」（两个都缺，但点出错误字段名才有修复价值）。
+  const unknown = Object.keys(a).filter(k => !known.includes(k));
+  if (unknown.length) {
+    const detail = unknown
+      .map(k => {
+        const guess = suggestField(k, known);
+        return guess ? k + "（应为 " + guess + "）" : k;
+      })
+      .join("、");
+    throw paramError(toolName + " 未知参数 " + detail + "；支持的参数：" + supported);
+  }
+
+  // ② 必填缺失 / 空串
+  const missing = (s.required ?? []).filter(k => a[k] === undefined || a[k] === null || a[k] === "");
+  if (missing.length) {
+    throw paramError(toolName + " 缺少必填参数 " + missing.join("、") + "；支持的参数：" + supported);
+  }
 }
 
 export function attachMcpFacade(server: http.Server, deps: McpFacadeDeps): void {
@@ -356,8 +427,11 @@ export async function mcpHandle(raw: string, req: http.IncomingMessage, res: htt
     res.end(JSON.stringify({ jsonrpc: "2.0", id, result }));
   };
   const replyError = (code: number, message: string) => {
+    // D11 兜底：错误信息里绝不允许出现 `undefined` 字面量——那正是本缺陷最刺眼的症状，
+    // 也是「字段没取到」的唯一线索，混在自然语言里只会让人以为工单 id 就叫 undefined。
+    const msg = String(message).replace(/\bundefined\b/g, "（未提供）");
     res.writeHead(200, { "content-type": "application/json", connection: "close" });
-    res.end(JSON.stringify({ jsonrpc: "2.0", id, error: { code, message } }));
+    res.end(JSON.stringify({ jsonrpc: "2.0", id, error: { code, message: msg } }));
   };
 
   switch (msg.method) {
@@ -383,6 +457,17 @@ export async function mcpHandle(raw: string, req: http.IncomingMessage, res: htt
     case "tools/call": {
       const name: string = msg.params?.name ?? "";
       const a = msg.params?.arguments ?? {};
+      // D11：入口统一校验。校验失败直接 -32602 返回，不进业务层——
+      // 否则 handler 里 `String(a.id)` 会把 undefined 拼成 "undefined" 继续往下走。
+      const tool = TOOLS.find(t => t.name === name);
+      if (tool) {
+        try {
+          validateArgs(name, tool.inputSchema, a);
+        } catch (err: any) {
+          replyError(typeof err?.code === "number" ? err.code : -32602, String(err?.message ?? err));
+          return;
+        }
+      }
       try {
         switch (name) {
           case "mac_check_in": {
@@ -424,7 +509,7 @@ export async function mcpHandle(raw: string, req: http.IncomingMessage, res: htt
               deps.onDeliveryFailed(task.id, caller);
               return;
             }
-            reply(toolResult({ task: r?.task ?? null, messages: r?.messages ?? [] }));
+            reply(toolResult({ task: r?.task ?? null, messages: r?.messages ?? [], pending: (r as any)?.pending ?? [], working: (r as any)?.working ?? null }));
             if (task?.id && res.writableEnded) deps.onDelivered(task.id);
             return;
           }
@@ -478,8 +563,9 @@ export async function mcpHandle(raw: string, req: http.IncomingMessage, res: htt
             return;
           }
           case "mac_order_create": {
+            let created: ReturnType<McpFacadeDeps["orderCreate"]>;
             try {
-              const o = deps.orderCreate({
+              created = deps.orderCreate({
                 title: a.title == null ? "" : String(a.title), description: a.description ? String(a.description) : undefined,
                 priority: a.priority as any, tags: a.tags, assignee: a.assignee ? String(a.assignee) : undefined,
                 owner: a.owner ? String(a.owner) : undefined, startDate: a.startDate, dueDate: a.dueDate,
@@ -488,12 +574,25 @@ export async function mcpHandle(raw: string, req: http.IncomingMessage, res: htt
                 coordination: a.coordination ? String(a.coordination) : undefined,
                 source: "mcp"
               }, String(a.by ?? "mcp"));
-              // 建单指名处理人即派发，否则对方收不到活（与控制台建单行为一致）
-              if (o.assignee) deps.orderRedispatch(o.id, o.assignee, String(a.by ?? "mcp"), o.coordination);
-              reply(toolResult(o));
             } catch (err: any) {
               replyError(orderErrorCode(String(err?.message ?? err)), String(err?.message ?? err));
+              return;
             }
+            // 建单指名处理人即派发，否则对方收不到活（与控制台建单行为一致）
+            let dispatchError: string | undefined;
+            if (created.assignee) {
+              try {
+                deps.orderRedispatch(created.id, created.assignee, String(a.by ?? "mcp"), created.coordination);
+              } catch (err: any) {
+                // D12 伴生缺陷：派发被拒时工单其实已经建好了，不能再整单返回 error。
+                // 调用方看到 error 会以为没建成而重试，同一件事于是冒出多张同名工单
+                // （线上已出现过一次三张同名单）。这里如实返回已建工单 + 派发失败原因。
+                dispatchError = String(err?.message ?? err);
+              }
+            }
+            reply(toolResult(dispatchError
+              ? { ...created, dispatchError, warning: "工单已创建，但派发未成功：" + dispatchError + "（无需重试建单，改用 mac_order_dispatch 补派即可）" }
+              : created));
             return;
           }
           case "mac_order_get": {
@@ -568,7 +667,9 @@ export async function mcpHandle(raw: string, req: http.IncomingMessage, res: htt
             replyError(-32602, "未知工具: " + name);
         }
       } catch (err: any) {
-        replyError(-32000, String(err?.message ?? err));
+        // 内部已定错误码（如门禁 -32603）原样透出，不要一律拍平成 -32000，
+        // 否则调用方无法区分「参数错」和「被 Supervisor 拦截」
+        replyError(typeof err?.code === "number" ? err.code : -32000, String(err?.message ?? err));
       }
       return;
     }

@@ -20,6 +20,16 @@ export interface TopoNode {
   workingOn?: string
   /** 挂在该节点身上的任务数 */
   taskCount?: number
+  /**
+   * 造型类别。造型只认这个字段，不按 role 文本猜——
+   * role 是人维护的、随时会改（把「测试」改成别的就变形），且 role 相同的人本就该长得一样。
+   * server = 主服务本体（不是节点）/ pm = 调度层 / agent = 接入节点。
+   */
+  kind?: 'server' | 'pm' | 'agent'
+  /** 展示名：agent 用节点名，server 用真实地址 */
+  label?: string
+  /** 悬停时补一行更具体的说明 */
+  subtitle?: string
 }
 
 /** 一条流转边：from 把任务交给 to */
@@ -28,6 +38,12 @@ export interface TopoFlow {
   to: string
   /** 最近的交接时刻，用于判断是否高亮 */
   at?: number
+  /**
+   * link = 连接关系（在线节点 ↔ 主服务，常亮，表示"连着"）
+   * flow = 任务流转（工单 handoff，带流动光点）
+   * 两者语义不同，必须分开画：以前只有 flow，于是"在线但没发生过交接"的节点看起来是断连的。
+   */
+  kind?: 'link' | 'flow'
 }
 
 export interface TopoData {
@@ -233,31 +249,12 @@ function makeServerStack(color: number) {
   return g
 }
 
-/** 终端棱柱造型：玻璃六棱柱 + 竖向透光槽 */
-function makePrism(color: number) {
-  const g = new THREE.Group()
-  g.add(new THREE.Mesh(new THREE.CylinderGeometry(1.0, 1.28, 2.3, 6), glassBody(color, 0.2)))
-  for (let i = 0; i < 6; i++) {
-    const a = (i / 6) * Math.PI * 2
-    const slit = new THREE.Mesh(new THREE.BoxGeometry(0.06, 1.5, 0.06), coreMat(color, 1.5))
-    slit.position.set(Math.cos(a) * 1.1, 0, Math.sin(a) * 1.1)
-    g.add(slit)
-  }
-  const tip = new THREE.Mesh(new THREE.ConeGeometry(0.5, 0.9, 6), glassBody(color, 0.35))
-  tip.position.y = 1.6
-  g.add(tip)
-  g.userData.cap = tip
-  return g
-}
-
 function shapeFor(node: TopoNode) {
-  // hub 服务器与调度层是固定角色，按 id 判而不是按角色名，避免角色改了就变形
-  if (node.id === 'hub') return makeServerStack
-  if (node.host === 'hub' && /hub-pm/.test(node.id)) return makeSphereCore
-  const role = node.role ?? ''
-  if (/调度|PM/i.test(role)) return makeSphereCore
-  if (/测试|QA/i.test(role)) return makePrism
-  if (/后端|服务|server|backend/i.test(role)) return makeServerStack
+  // 造型只认 kind，不按 role 文本猜。
+  // 以前 role 命中 /测试|QA/ 会被画成六棱柱，于是同一个人的 role 一改（比如被改成「测试」）
+  // 它在图里就跟别人长得不一样——role 是给人看的标签，不该影响几何体。
+  if (node.kind === 'server') return makeServerStack
+  if (node.kind === 'pm') return makeSphereCore
   return makeCubeCluster
 }
 
@@ -630,12 +627,15 @@ export class TopoScene {
       this.nodes.set(node.id, { data: node, grp, body, hit, basePos: pos.clone() })
     }
 
-    // 光缆：只连存在的两端
-    data.flows.forEach((f, idx) => {
+    // 光缆：只连存在的两端。link 先画（常亮连接），flow 后画（任务流转动画）
+    const ordered = [...data.flows].sort(
+      (a, b) => (a.kind === 'link' ? 0 : 1) - (b.kind === 'link' ? 0 : 1),
+    )
+    ordered.forEach((f, idx) => {
       const a = this.nodes.get(f.from)
       const b = this.nodes.get(f.to)
       if (!a || !b || f.from === f.to) return
-      this.buildWire(a.basePos, b.basePos, idx)
+      this.buildWire(a.basePos, b.basePos, idx, f.kind ?? 'flow')
     })
 
     // 视角自适应：节点多时拉远
@@ -644,7 +644,8 @@ export class TopoScene {
     this.controls.update()
   }
 
-  private buildWire(a: THREE.Vector3, b: THREE.Vector3, seed: number) {
+  private buildWire(a: THREE.Vector3, b: THREE.Vector3, seed: number, kind: 'link' | 'flow' = 'flow') {
+    const isLink = kind === 'link'
     const PAD = 3.0
     const portOf = (p: THREE.Vector3, toward: THREE.Vector3) => {
       const d = toward.clone().sub(p)
@@ -672,15 +673,18 @@ export class TopoScene {
       return !prev || p.distanceTo(prev) > 0.05
     })
 
-    this.wireLayer.add(makeRibbon(clean, 1.6, 0x1466c4, 0.2))
-    this.wireLayer.add(makeRibbon(clean, 0.8, 0x2b8fe0, 0.5))
-    this.wireLayer.add(makeRibbon(clean, 0.26, 0x74d0ff, 0.85))
+    // link（连接）用青绿系、更宽更稳；flow（流转）用蓝色系 + 流动光点
+    this.wireLayer.add(makeRibbon(clean, isLink ? 1.9 : 1.6, isLink ? 0x0f7a63 : 0x1466c4, isLink ? 0.22 : 0.2))
+    this.wireLayer.add(makeRibbon(clean, isLink ? 1.0 : 0.8, isLink ? 0x2fd6a6 : 0x2b8fe0, isLink ? 0.42 : 0.5))
+    this.wireLayer.add(makeRibbon(clean, isLink ? 0.3 : 0.26, isLink ? 0x9dffe0 : 0x74d0ff, isLink ? 0.75 : 0.85))
 
     const path = new THREE.CurvePath<THREE.Vector3>()
     for (let i = 1; i < clean.length; i++) path.add(new THREE.LineCurve3(clean[i - 1], clean[i]))
 
     const dots: { sprite: THREE.Sprite; t: number }[] = []
-    for (let i = 0; i < 3; i++) {
+    // 连接线不跑光点：它表达"通着"，不是"正在送东西"；跑点会跟流转线混淆
+    const dotCount = isLink ? 0 : 3
+    for (let i = 0; i < dotCount; i++) {
       const sprite = new THREE.Sprite(
         new THREE.SpriteMaterial({
           color: 0x9fe0ff,
@@ -692,7 +696,7 @@ export class TopoScene {
       )
       sprite.scale.setScalar(0.6)
       this.wireLayer.add(sprite)
-      dots.push({ sprite, t: i / 3 })
+      dots.push({ sprite, t: i / dotCount })
     }
     this.flows.push({ path, dots, speed: 0.16 + ((seed * 37) % 10) * 0.01 })
   }

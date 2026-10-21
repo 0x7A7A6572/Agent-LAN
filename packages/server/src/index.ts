@@ -14,7 +14,7 @@ import { FileChannel } from "./file-channel.js";
 import { OrderStore } from "./orders.js";
 import type { Order } from "./types.js";
 import { RoleStore } from "./roles.js";
-import { DispatchGate } from "./gate.js";
+import { DispatchGate, isReworkPrompt } from "./gate.js";
 import { EventBus } from "./events.js";
 import type { HubEvent } from "./events.js";
 import { loadConfig, loadMemory, saveConfig, saveMemory, pmPaths } from "./pm.js";
@@ -121,21 +121,32 @@ export function createServer(options: ServerOptions): http.Server {
     for (const t of Array.isArray(raw) ? raw : []) tasks.set(t.id, t);
   } catch { /* 首次启动无文件 */ }
 
-  function enqueueFor(name: string, task: Task, actor = "human-console", orderId?: string): void {
+  /**
+   * 派发门禁的唯一出口：落库前预检与入队时判定共用，避免两处各写一遍导致语义漂移。
+   * 被拒抛 -32603。调用方必须在 tasks.set 之前调用它——见 dispatchOrder 的说明。
+   */
+  function checkDispatchAllowed(name: string, task: Task, actor: string, orderId?: string): void {
     // 派发权门禁：PM 接管期间，跨工单派发必须经 Supervisor；
     // 同工单返工（prompt 带 [返工] 标记）豁免——它不改变谁为哪张单负责
-    const rework = task.prompt.includes("[返工]");
+    const rework = isReworkPrompt(task.prompt);
     const verdict = gate.check({ actor, target: name, orderId, rework });
     if (!verdict.allow) {
       log("[gate] 拒绝派发 -> " + name + "：" + (verdict.reason ?? ""));
       throw { code: -32603, message: verdict.reason ?? "派发被 Supervisor 门禁拦截" };
     }
-    const waiters = pullWaiters.get(name);
+  }
+
+  function enqueueFor(name: string, task: Task, actor = "human-console", orderId?: string): void {
+    checkDispatchAllowed(name, task, actor, orderId);
+    // 忙时不直投：节点还有 working 任务就不唤醒 waiter，只入队，
+    // 否则绕过 pullTask 的忙时门禁把活塞给正在执行的会话
+    const busy = [...tasks.values()].some(x => x.state === "working" && x.deliveredTo === name);
+    const waiters = busy ? [] : (pullWaiters.get(name) ?? []);
     if (waiters?.length) {
       const w = waiters.shift()!;
       w(task);
     } else {
-      // 无人等：存入待领队列
+      // 无人等或节点忙：存入待领队列
       let q = pullQueues.get(name);
       if (!q) { q = []; pullQueues.set(name, q); }
       q.push(task);
@@ -230,15 +241,27 @@ export function createServer(options: ServerOptions): http.Server {
   /** 领任务：队列有货立即出队，否则挂起等待；返回 null 表示超时空手 */
   async function pullTask(name: string, timeoutMs: number): Promise<Task | null> {
     reclaimStaleFor(name);
+    // 忙时门禁：节点还有未终态任务时不派新活，只带留言。
+    // 等待时长对齐长轮询，worker 一轮一续命，留言最多迟一个轮询周期
+    if ([...tasks.values()].some(x => x.state === "working" && x.deliveredTo === name)) {
+      await new Promise<void>(resolve => {
+        const t = setTimeout(resolve, Math.min(timeoutMs, 25000));
+        t.unref?.();
+      });
+      return null;
+    }
     const q = pullQueues.get(name);
-    if (q?.length) {
+    // 出队时跳过已终态任务：排队中被取消/上报终态的活不能再派
+    while (q?.length) {
       const task = q.shift()!;
+      if (isTerminal(task.state)) { saveQueues(); continue; }
       task.state = "working";
       task.updatedAt = new Date().toISOString();
       task.deliveredAt = task.updatedAt;
       task.deliveredTo = name;
       task.deliveredInFlight = true;
       registry.setBusy(name, true, workingOnOf(task));
+      pushPresence();
       log("-> task " + task.id.slice(0, 8) + " pulled by " + name);
       saveQueues();
       saveTasks();
@@ -275,6 +298,7 @@ export function createServer(options: ServerOptions): http.Server {
           task.deliveredTo = name;
           task.deliveredInFlight = true;
           registry.setBusy(name, true, workingOnOf(task));
+          pushPresence();
           log("-> task " + task.id.slice(0, 8) + " pushed to " + name);
           saveTasks();
         }
@@ -350,9 +374,22 @@ export function createServer(options: ServerOptions): http.Server {
   function dispatchOrder(o: Order, assignee: string, by: string, coordination?: string): void {
     const now = new Date().toISOString();
     const task: Task = { id: randomUUID(), state: "submitted", prompt: orderPrompt(o, coordination), artifacts: [], createdAt: now, updatedAt: now };
+    // D12：门禁必须走在落库前面。原来是先 tasks.set+saveTasks 再 enqueueFor，
+    // enqueueFor 内部被门禁 throw 时没有人回滚，任务既不在队列也没人投递，
+    // 只剩 .taskstore.json 里一条永远没人领、重启还会复活的「幽灵任务」。
+    checkDispatchAllowed(assignee, task, by, o.id);
     tasks.set(task.id, task);
     saveTasks();
-    enqueueFor(assignee, task, by, o.id);
+    try {
+      enqueueFor(assignee, task, by, o.id);
+    } catch (err) {
+      // 兜底：预检已过仍失败（理论上不可达，例如并发改了派发权），
+      // 必须把刚写的任务撤回并立刻落盘——否则防抖窗口内进程退出仍会留下幽灵任务
+      tasks.delete(task.id);
+      saveTasks();
+      flushTasks();
+      throw err;
+    }
     log("-> order " + o.id + " dispatched to " + assignee + " (by " + by + ")");
   }
 
@@ -375,6 +412,35 @@ export function createServer(options: ServerOptions): http.Server {
     return { ok: true, canceled: killed };
   }
 
+  /**
+   * 作废某工单的历史副本任务（D14）。
+   *
+   * redispatch 是「重派」不是「取消」，所以这里**不能**复用 cancelTask：
+   * cancelTask 会调 syncOrderFromTask(t, "canceled", ...)，把工单状态一并改成 canceled，
+   * 一次重派就把单取消了。此处只把旧任务自身置 canceled + 踢出待领队列 + 落盘，
+   * 工单状态交给 redispatchOrder 自己置 developing。
+   *
+   * existedBefore 限定为「dispatch 之前就已存在的任务 id」——必须先派后清，
+   * 否则 dispatch 被门禁拒（-32603）时旧任务已被清掉，这单就成了一个任务都没有的空单。
+   */
+  function supersedeStaleTasks(orderId: string, existedBefore: Set<string>): number {
+    const marker = "[工单 " + orderId + "]";
+    const stale = (t: Task) =>
+      t.prompt.includes(marker) && existedBefore.has(t.id) && !isTerminal(t.state);
+    // 队列副本先踢出去：换 assignee 时旧节点的长轮询不能还领到这份已判废弃的活
+    clearQueuesFor(stale);
+    let n = 0;
+    for (const t of tasks.values()) {
+      if (!stale(t)) continue;
+      t.state = "canceled";
+      t.updatedAt = new Date().toISOString();
+      pushEvent(t.id, { kind: "status", status: { state: "canceled", timestamp: t.updatedAt } });
+      n++;
+    }
+    if (n) saveTasks();
+    return n;
+  }
+
   /** 重新派发工单：可换 assignee，重建任务入队 */
   function redispatchOrder(id: string, assignee: string | undefined, by: string, coordination?: string): { ok: boolean; taskId?: string; error?: string } {
     const o = orderStore.get(id);
@@ -385,8 +451,18 @@ export function createServer(options: ServerOptions): http.Server {
     if (!registry.find(fresh.assignee)) return { ok: false, error: "目标不在线或未知: " + fresh.assignee };
     // 显式给了就落库，没给则沿用该单已记录的协作说明
     const coord = coordination ?? fresh.coordination;
+    // D14：同一张单连派 N 次会留下 N 个未终态任务、全部入队同一节点，
+    // 节点要逐个 consume + 逐个 mac_report，同一个活被重复执行；
+    // 换 assignee 时旧节点队列里的副本也必须失效，否则它会做一份已判废弃的活。
+    // 顺序是「先派后清」：dispatch 可能被门禁拒，那时若已清掉旧任务就成了空单。
+    const existedBefore = new Set(tasks.keys());
     dispatchOrder(fresh, fresh.assignee, by, coord);
-    orderStore.update(id, { status: "developing", force: true, note: "重新派发 -> " + fresh.assignee, coordination: coord }, by);
+    const superseded = supersedeStaleTasks(id, existedBefore);
+    orderStore.update(id, {
+      status: "developing", force: true, coordination: coord,
+      note: "重新派发 -> " + fresh.assignee + (superseded ? "（作废旧任务 " + superseded + " 个）" : ""),
+    }, by);
+    if (superseded) log("[order] " + id + " 重派作废旧任务 " + superseded + " 个");
     return { ok: true };
   }
 
@@ -423,9 +499,19 @@ export function createServer(options: ServerOptions): http.Server {
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
+    // D12：与 dispatchOrder 同一处理——先过门禁再落库，入队失败即回滚，
+    // 且工单状态流转放在派发成功之后，被拒时不会把单子推進 developing
+    checkDispatchAllowed(target, task as any, by, orderId);
     tasks.set(task.id, task);
     saveTasks();
-    enqueueFor(target, task as any, by, orderId);
+    try {
+      enqueueFor(target, task as any, by, orderId);
+    } catch (err) {
+      tasks.delete(task.id);
+      saveTasks();
+      flushTasks();
+      throw err;
+    }
     orderStore.update(orderId, { status: "developing", note: "返工: " + note, force: true }, by);
     log("[order] " + orderId + " 返工 -> " + target + "（by " + by + "）");
     return { ok: true, taskId: task.id };
@@ -461,6 +547,9 @@ export function createServer(options: ServerOptions): http.Server {
       // 通知通路：此前只写日志，控制台无感知；现随名册下发 waitingFor
       if (by) registry.setWaiting(by, text || "等待人工确认");
       log("[!!] 任务 " + taskId.slice(0, 8) + " 等待人工确认" + (text ? ": " + text.slice(0, 120) : ""));
+    } else if (state === "working") {
+      // 开工上报：置执行态（workingOn 带任务摘要，控制台才显示在忙什么）
+      if (by) registry.setBusy(by, true, workingOnOf(t), "agent", AGENT_BUSY_TTL_MS);
     } else if (by) {
       registry.setWaiting(by, undefined);
       // 该任务已终态：节点若没别的在跑任务，执行态要回到空闲
@@ -850,8 +939,6 @@ export function createServer(options: ServerOptions): http.Server {
       createdAt: now,
       updatedAt: now
     };
-    tasks.set(task.id, task);
-
     // target 指向其他节点 → 换用远端代理执行；不带 target 或指 hub 本名 → 本机 adapter
     const target: string | undefined = params?.target;
     let adapter = options.adapter;
@@ -864,7 +951,21 @@ export function createServer(options: ServerOptions): http.Server {
         log("-> task " + task.id.slice(0, 8) + " forward to " + target + ": " + prompt.slice(0, 60));
       } else if (presence) {
         // 入站客户端：入队等它长轮询来领
-        enqueueFor(target, task, actor ?? remote);
+        // D12-b：与 dispatchOrder 同范式——「先落库后校验」在这里比 D12 更隐蔽，因为本函数
+        // 后面没有紧跟 saveTasks()：失败当时盘上是干净的，等下一笔会落盘的动作（比如
+        // dispatchOrder 的 saveTasks）才把这具幽灵一起写进 .taskstore.json，重启复活。
+        // 所以门禁预检必须在 tasks.set 之前，enqueueFor 兜底失败还要回滚并立刻冲刷。
+        checkDispatchAllowed(target, task, actor ?? remote);
+        tasks.set(task.id, task);
+        saveTasks();
+        try {
+          enqueueFor(target, task, actor ?? remote);
+        } catch (err) {
+          tasks.delete(task.id);
+          saveTasks();
+          flushTasks();
+          throw err;
+        }
         log("-> task " + task.id.slice(0, 8) + " queued for " + target + ": " + prompt.slice(0, 60));
         return { task: { id: task.id, state: "submitted", target } };
       } else {
@@ -873,6 +974,9 @@ export function createServer(options: ServerOptions): http.Server {
     } else {
       log("<- task " + task.id.slice(0, 8) + " from " + remote + ": " + prompt.slice(0, 60));
     }
+    // 此处已无会抛错的校验，才允许落库（未知 target 在上面就抛了，不会留下幽灵）
+    tasks.set(task.id, task);
+    saveTasks();
     void driveTask(task, adapter);
     return { task: { id: task.id, state: task.state, target: target ?? options.card.name } };
   }
@@ -986,6 +1090,13 @@ export function createServer(options: ServerOptions): http.Server {
   // 接入体检脚本：目标机器自检 bash/curl/写权限/网络
   function probeScript(): string {
     const tpl = path.join(path.dirname(fileURLToPath(import.meta.url)), "probe.sh");
+    return fs.readFileSync(tpl, "utf8");
+  }
+
+  // 门铃脚本：会话侧唤醒用。worker 常驻不退出，宿主不会产生「任务结束」事件，
+  // 只能由它盯 node.json、命中即退出，把「有活」翻译成会话能收到的那一种事件。
+  function bellScript(): string {
+    const tpl = path.join(path.dirname(fileURLToPath(import.meta.url)), "bell.sh");
     return fs.readFileSync(tpl, "utf8");
   }
 
@@ -1131,6 +1242,11 @@ export function createServer(options: ServerOptions): http.Server {
       res.end(probeScript());
       return;
     }
+    if (req.method === "GET" && url.pathname === "/bell.sh") {
+      res.writeHead(200, { "content-type": "text/x-shellscript; charset=utf-8" });
+      res.end(bellScript());
+      return;
+    }
     if (req.method === "GET" && url.pathname === "/mcp/install.md") {
       res.writeHead(200, { "content-type": "text/markdown; charset=utf-8" });
       res.end(installMd());
@@ -1138,7 +1254,9 @@ export function createServer(options: ServerOptions): http.Server {
     }
     if (req.method === "GET" && url.pathname === "/console/presence/stream") {
       res.writeHead(200, {
-        "content-type": "text/event-stream",
+        // charset 必须显式给：部分代理/浏览器对无 charset 的 event-stream
+        // 按 latin-1 解码，中文 workingOn 变问号
+        "content-type": "text/event-stream; charset=utf-8",
         "cache-control": "no-cache",
         connection: "keep-alive"
       });
@@ -1546,16 +1664,21 @@ const mcpDeps: McpFacadeDeps = {
     const task = await pullTask(name, ms);
     const mail = dropMail(name);
     if (mail.length) pushPresence();
-    return { task, messages: mail };
+    // 本节点执行中任务：state=working 且投给本节点的（排除自己刚领的）
+    const cur = [...tasks.values()].find(x =>
+      x.state === "working" && x.deliveredTo === name &&
+      (!task || x.id !== task.id));
+    const working = cur ? { taskId: cur.id, summary: workingOnOf(cur), since: cur.deliveredAt } : null;
+    // 本节点排队中的任务摘要：节点据此在 node.json 里维护完整态
+    const pending = (pullQueues.get(name) ?? [])
+      .filter(t => !isTerminal(t.state))
+      .map(t => ({ id: t.id, prompt: t.prompt.slice(0, 200), createdAt: t.createdAt }));
+    return { task, messages: mail, pending, working };
   },
   onDeliveryFailed: (taskId, name) => redeliverTask(taskId, name),
   onDelivered: taskId => confirmDelivered(taskId),
   report: (taskId, state, text, artifacts, by) => {
-    // 节点上报结果驱动执行中状态：working 置位（带上任务描述，否则会抹空工作项），其余清除
-    if (by) {
-      const t = tasks.get(taskId);
-      registry.setBusy(by, state === "working", state === "working" && t ? workingOnOf(t) : undefined);
-    }
+    // 开工上报置执行态在 reportResult 内统一处理（含终态清忙），这里不重复
     return reportResult(taskId, state, text, artifacts, by);
   },
   sendTask: async (prompt, target, actor) => {

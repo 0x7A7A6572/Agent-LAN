@@ -24,7 +24,7 @@
 
     SERVER=<主服务IP:端口> bash probe.sh --install AGENT=<agent名如dsh> NAME=<你的节点名>
 
-安装位置 ~/.mac-worker/<agent>/（worker.sh + node.json 身份文件）。同机多个
+安装位置 ~/.mac-worker/<agent>/（worker.sh + bell.sh + node.json 身份文件）。同机多个
 agent（dsh/workbuddy/...）各装各的目录，互不抢任务；同一 agent 的所有会话
 裸启动共享身份，服务端自动会话接管。
 
@@ -41,12 +41,21 @@ probe.sh 检测到 WSL 会自动改落到 /mnt/c/Users/<你>/.mac-worker；
     curl -s http://<主服务IP>/worker.sh -o mac_worker.sh
     NAME=<你的节点名> DESC=<一句话能力> SERVER=<主服务IP:端口> bash mac_worker.sh
 
-脚本行为：注册并循环领活，空转时自动保活（40 秒无活动判离线），断线无限重连；
-**拿到任务或留言就退出**并输出完整 JSON，交给上层 agent 处理后重新启动它
-（退出后留一个伴生后台心跳，最长 2 小时，任务期间节点不掉线）。
-脚本带版本控制：每次心跳比对 hub 版本，不一致时自动下载新脚本、原子替换
-（旧版存 .bak）并重启，无需手动更新。
-Node 环境的接入方也可以直接用 @mac/client 的 AgentClient，行为一致。
+脚本行为：常驻轮询不退出。每轮心跳 + 领活（40 秒无活动判离线），断线无限重连；
+**领到任务或留言只打印 JSON、不退出**——上层会话从输出取走处理即可，
+脚本带版本控制：每次心跳比对 hub 版本，
+不一致时自动下载新脚本、原子替换（旧版存 .bak）并重启。
+
+### 唤醒：门铃 bell.sh（必须配，否则节点「在线但不动」）
+
+worker.sh 是常驻的（为的是心跳不断、不用反复重启），因此**它自己不会触发唤醒**。必须再起一个门铃：
+
+    bash ~/.mac-worker/<agent>/bell.sh
+
+它只读 node.json，发现新任务 / 新排队 / 新留言就退出，靠「退出」触发唤醒。
+
+- **每次处理完要重新起一遍**。这是当前形态的固有成本：唤醒 = 一个后台进程结束。
+- 退出码约定：`0` 有新活（去读 node.json）、`3` worker 疑似已死需重连、`4` 缺 python。
 
 ### 重连（一句话恢复）
 
@@ -60,21 +69,19 @@ Node 环境的接入方也可以直接用 @mac/client 的 AgentClient，行为�
 
 给会话里 agent的一句话指令：
 
-> 重连 Agent-LAN：bash ~/.mac-worker/<agent>/worker.sh
+> 重连 Agent-LAN：bash ~/.mac-worker/<agent>/worker.sh, 并启动门铃  bash ~/.mac-worker/<agent>/bell.sh
 
 要点：
 
-- **必须在用户当前对话的会话里起**。worker 是该会话的子进程，在别的会话
-  或后台起的会随那个会话结束被带走，表现为"刚连上又掉线"。
-- **同身份只起一个**。重复起多个会互抢任务导致状态抖动；服务端虽有会话
-  接管兜底，但不该依赖它。
+- **必须在用户当前对话的会话里起**。worker 是该会话的子进程，
+- **同身份只起一个**。重复起多个会互抢任务导致状态抖动；
 - 起完确认：worker.sh 重启后 40 秒内有心跳，控制台节点卡转「在线」即成功。
-- 起之前如果看到 `~/.mac-worker/<agent>/` 下有异常残留文件，不用管——
-  worker.sh 自己会处理；唯一要注意的是别让旧进程还活着又起新的。
 
 ### 上层会话的处理循环
 
-脚本退出 = 任务到手。上层会话（dsh/workbuddy 的对话）拿到 JSON 后：
+worker 常驻不退出，命中任务/留言时把完整 JSON 打到 stdout 并继续轮询。
+**会话不是靠读 stdout 发现活，而是靠门铃退出被叫醒**——被叫醒后再去读 node.json
+（或后台任务输出）拿详情。上层会话（dsh/workbuddy 的对话）拿到任务后：
 
 1. 读 task.prompt 执行；开始时先 mac_report（taskId、state="working"）报开工
    ——直接用下面的 curl，不依赖任何 MCP 注册。
@@ -83,9 +90,42 @@ Node 环境的接入方也可以直接用 @mac/client 的 AgentClient，行为�
 3. 完成后 mac_report(state="completed"、text=结果说明)；失败报 failed。
    hub 侧取消任务后，客户端会自动中止本地执行并置 canceled，
    你这轮收到失败报错即可，无需再上报。
-4. 重新启动脚本进入下一轮领活。
+4. 无需重启 worker：它一直在轮询，执行期间心跳照跳、留言照收。
+   节点忙（有未终态任务）时 hub 不会再派新活，新任务自动排队，
+   当前任务上报终态后下一轮即被领走。
+5. **重新起门铃**：`bash ~/.mac-worker/<agent>/bell.sh`。不重新起，下一次有活时
+   会话不会再被叫醒——表现为控制台显示任务已送达、节点显示执行中，但会话毫无反应。
 
-**上报方式**（worker.sh 模式不依赖 MCP 注册，能跑命令就能上报）：
+### node.json：节点的完整态文件
+
+`~/.mac-worker/<agent>/node.json` 不只是身份文件，worker 每轮轮询都会
+把 hub 视角的最新状态原子写进去。会话随时读它即可知道「这个节点现在
+归谁、在干嘛、名下还压着什么」：
+
+    {
+      "agent": "dsh", "name": "…", "server": "…", "role": "…",   ← 身份块（静态）
+      "session": { "id": "…", "startedAt": "…" },                 ← 会话持有
+      "state": {                                                   ← 状态块（每轮刷新）
+        "updatedAt": "…",          ← 最后轮询时间，超 40s 即过期不可信
+        "online": true,
+        "working":  { "taskId": "…", "summary": "…", "since": "…" },
+        "pending":  [ { "taskId": "…", "summary": "…", "createdAt": "…" } ],
+        "messages": [ { "text": "…", "from": "…", "at": "…" } ]
+      }
+    }
+
+约定：
+
+- **MAC_SESSION_ID**：会话启动 worker 时注入
+  （`MAC_SESSION_ID=<会话标识> bash worker.sh`），worker 写进 session 块。
+  语义统一为「持有本节点的会话」，各 agent 用自己的会话标识填。
+  用途：识别孤儿 worker（session 在而会话已亡）、避免多会话重复起 worker。
+- **consumed 标记**：会话处理完某条留言后，把 node.json 里对应 message 的
+  `consumed` 置 true；worker 下轮合并留言时按 (at,text) 去重、不覆盖该标记。
+  未标 consumed 的留言视为待处理。
+- state 以 hub 为唯一事实源，worker 不自行猜测；写失败保留上轮值。
+
+**上报方式**：
 
     curl -s --noproxy '*' -X POST http://<主服务IP>/mcp       -H 'content-type: application/json'       -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"mac_report","arguments":{"taskId":"<任务id>","name":"你的节点名","state":"completed","text":"结果说明"}}}'
 
@@ -127,7 +167,7 @@ mac_check_in({ "name": "<节点名>", "state": "working", "workingOn": "人工�
 ```
 
 - `working` 默认 **15 分钟**到期自动回空闲；干完请显式 `state: "idle"` 立刻复位。
-- **不带 `state` 的是纯心跳**，不会改动现有执行态 —— 伴生心跳不会把执行中打回空闲。
+- **不带 `state` 的是纯心跳**，不会改动现有执行态。
 - 有任务在跑时不要用 `idle` 去清，hub 会忽略（任务态的清除只认 `mac_report`）。
 
 ### Supervisor 接管期间有什么不一样

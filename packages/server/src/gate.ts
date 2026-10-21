@@ -27,6 +27,38 @@ export interface GateVerdict {
   reason?: string;
 }
 
+/**
+ * 由任务 prompt 派生「同工单返工」标记。
+ * 这是派发侧判断 rework 的唯一判据——落库前预检和入队时判定必须共用它，
+ * 否则两处各写一遍字符串字面量，迟早漂移（D12 的根因之一）。
+ */
+export function isReworkPrompt(prompt: string): boolean {
+  return prompt.includes("[返工]");
+}
+
+/**
+ * 纯函数门禁判定：不依赖任何实例状态。
+ * DispatchGate.check 必须走这里，保证「落库前预检」与「入队时判定」永远是同一套语义。
+ */
+export function evaluateDispatch(mode: DispatchMode, pmName: string, req: DispatchRequest): GateVerdict {
+  // 人永远是最高权限，任何模式下都不拦
+  if (req.actor === "human-console" || req.actor === pmName) {
+    return { allow: true, mode };
+  }
+  if (mode !== "pm") {
+    return { allow: true, mode };
+  }
+  // pm 模式：只有同工单内返工豁免
+  if (req.rework) {
+    return { allow: true, mode, reason: "同工单内返工" };
+  }
+  return {
+    allow: false,
+    mode,
+    reason: "PM 接管期间，跨工单派发必须经 Supervisor（当前发起方 " + req.actor + "）"
+  };
+}
+
 export class DispatchGate {
   private mode: DispatchMode = "human";
   private lastPmBeat = 0;
@@ -62,21 +94,6 @@ export class DispatchGate {
 
   /** 判定一次派发是否放行 */
   check(req: DispatchRequest): GateVerdict {
-    // 人永远是最高权限，任何模式下都不拦
-    if (req.actor === "human-console" || req.actor === this.pmName) {
-      return { allow: true, mode: this.mode };
-    }
-    if (this.mode !== "pm") {
-      return { allow: true, mode: this.mode };
-    }
-    // pm 模式：只有同工单内返工豁免
-    if (req.rework) {
-      return { allow: true, mode: this.mode, reason: "同工单内返工" };
-    }
-    return {
-      allow: false,
-      mode: this.mode,
-      reason: "PM 接管期间，跨工单派发必须经 Supervisor（当前发起方 " + req.actor + "）"
-    };
+    return evaluateDispatch(this.mode, this.pmName, req);
   }
 }

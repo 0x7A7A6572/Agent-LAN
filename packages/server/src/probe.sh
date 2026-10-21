@@ -111,6 +111,15 @@ if [ "$1" = "--install" ]; then
   mkdir -p "$INSTALL_DIR" || { echo "[x] 无法创建 $INSTALL_DIR"; exit 1; }
   curl -s --noproxy '*' "http://$SERVER/worker.sh" -o "$INSTALL_DIR/worker.sh" || { echo "[x] 下载失败"; exit 1; }
   chmod +x "$INSTALL_DIR/worker.sh" 2>/dev/null
+  # 门铃：会话侧唤醒用。hub 还没提供 /bell.sh 时静默跳过，不阻断安装
+  # （-f 很关键：没有它 curl 会把 404 的 HTML 当成脚本落到磁盘上）
+  if curl -sf --noproxy '*' "http://$SERVER/bell.sh" -o "$INSTALL_DIR/bell.sh" 2>/dev/null; then
+    chmod +x "$INSTALL_DIR/bell.sh" 2>/dev/null
+    HAS_BELL=1
+  else
+    rm -f "$INSTALL_DIR/bell.sh"
+    HAS_BELL=0
+  fi
   if [ ! -f "$INSTALL_DIR/node.json" ]; then
     cat > "$INSTALL_DIR/node.json" <<EOF
 {
@@ -136,9 +145,12 @@ EOF
 
 - 重连：bash __DIR__/worker.sh —— 不用任何参数，它自己从 node.json 读回身份。
   会话任务被关、机器重启后都靠这一条恢复；必须在当前会话里起，同身份只起一个。
-- 接活：起 bash __DIR__/worker.sh。它持续领活，拿到任务或留言就退出并打印 JSON；
-  上层拿到 JSON 后先调 mac_report(taskId, state="working", name="__NAME__") 报开工，
-  干完报 completed、失败报 failed，然后重新启动脚本进入下一轮。
+- 接活：起 bash __DIR__/worker.sh。它**常驻轮询不退出**（心跳不断、领到任务只打印 JSON），
+  领到活后先调 mac_report(taskId, state="working", name="__NAME__") 报开工，
+  干完报 completed、失败报 failed。
+- 唤醒（关键，漏了节点会「在线但不动」）：worker 不会让会话自己醒过来，必须再起
+  bash __DIR__/bell.sh。它只读 node.json，一有新任务/新留言就退出，靠「进程退出」
+  触发会话唤醒；**每次处理完要重新起一遍**。worker 挂了它也会叫你去重连。
 - 需要人工确认：mac_report(state="input-required", text=等谁确认什么)
   （没有 request_input 这个工具），控制台会提醒，答复以留言送达。
 - 规范全文：curl -s http://__SERVER__/mcp/install.md ，或调工具 mac_get_guide。
@@ -172,6 +184,11 @@ HINTEOF
 
   echo "[✓] 已安装到 $INSTALL_DIR"
   echo "启动：bash $INSTALL_DIR/worker.sh（配置已记忆，免参数）"
+  if [ "${HAS_BELL:-0}" = "1" ]; then
+    echo "唤起：bash $INSTALL_DIR/bell.sh（处理完一次后要重新起）"
+  else
+    echo "[!] hub 未提供 /bell.sh，本次没装门铃；升级 hub 后重跑 --install 即可补上"
+  fi
   echo "临时换名调试：NAME=xxx bash $INSTALL_DIR/worker.sh"
   exit 0
 fi
