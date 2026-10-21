@@ -582,26 +582,7 @@ export class TopoScene {
   }
 
   private buildDecor() {
-    // 背景塔楼：给纵深，不参与交互
-    const towerSeeds: [number, number, number][] = [
-      [-17, 3, 5.5], [17, 2, 4.2], [-3, -15, 6.5], [4, 15, 3.6], [-20, -10, 4.8], [21, -8, 5.2],
-    ]
-    for (const [x, z, h] of towerSeeds) {
-      const t = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.42, 0.56, h, 8),
-        new THREE.MeshStandardMaterial({
-          color: 0x0d1e33,
-          metalness: 0.8,
-          roughness: 0.45,
-          emissive: new THREE.Color(0x1a4a7a),
-          emissiveIntensity: 0.55,
-        }),
-      )
-      t.position.set(x, h / 2, z)
-      this.decorLayer.add(t)
-    }
-
-    // 悬浮碎片：缓慢漂移
+    // 悬浮碎片：缓慢漂移。背景塔楼已移除：高圆柱会遮挡环形排布后的节点/任务牌
     const shardMat = new THREE.MeshStandardMaterial({
       color: 0x123a5e,
       emissive: new THREE.Color(0x4fb8ff),
@@ -741,6 +722,20 @@ export class TopoScene {
         grp.add(inner)
       }
 
+      // 悬浮光柱，制造「浮起来」的观感（高 1.6 挂在 y1.15，够不到牌）
+      const beam = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.04, 0.16, 1.6, 10, 1, true),
+        new THREE.MeshBasicMaterial({
+          color: accent,
+          transparent: true,
+          opacity: 0.28,
+          blending: THREE.AdditiveBlending,
+          side: THREE.DoubleSide,
+        }),
+      )
+      beam.position.y = 1.15
+      grp.add(beam)
+
       // 任务牌：仅「有活」时出现——运行中或排队>0，空闲节点不挂牌。
       const boardItems = node.queuedItems ?? []
       const hasBoard = node.kind === 'agent' && (node.running || boardItems.length > 0)
@@ -756,11 +751,7 @@ export class TopoScene {
         )
         // 高度按内容行数自适应（纹理宽高比）
         board.scale.set(bw, bw * aspect, 1)
-        // 沿「环心→节点」方向外推 3 单位，牌悬在节点外侧上空
-        const outDir = new THREE.Vector3(pos.x, 0, pos.z)
-        if (outDir.lengthSq() > 0.01) outDir.normalize()
-        board.position.copy(outDir.multiplyScalar(3))
-        board.position.y = 8 + (bw * aspect) / 2
+        board.position.y = 6.2 + (bw * aspect) / 2
         grp.add(board)
       }
 
