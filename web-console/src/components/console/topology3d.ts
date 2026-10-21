@@ -263,8 +263,29 @@ function taskBoardTexture(
   return { tex, aspect: H / W }
 }
 
-/** 节点脚下的深灰哑光托板，本身不发光 */
-function makePlatform(size = 5.2) {  const grp = new THREE.Group()
+/** 边沿渐变光纹理：底部亮、向上淡出，四边共用一张 */
+const edgeGlowCache = new Map<string, THREE.CanvasTexture>()
+function edgeGlowTexture(colorCss: string) {
+  const cached = edgeGlowCache.get(colorCss)
+  if (cached) return cached
+  const canvas = document.createElement('canvas')
+  canvas.width = 8
+  canvas.height = 128
+  const ctx = canvas.getContext('2d')!
+  const grd = ctx.createLinearGradient(0, 0, 0, 128)
+  grd.addColorStop(0, 'rgba(0,0,0,0)')
+  grd.addColorStop(0.55, colorCss.replace('1)', '0.25)'))
+  grd.addColorStop(1, colorCss)
+  ctx.fillStyle = grd
+  ctx.fillRect(0, 0, 8, 128)
+  const tex = new THREE.CanvasTexture(canvas)
+  edgeGlowCache.set(colorCss, tex)
+  return tex
+}
+
+/** 节点脚下的深灰哑光托板；hub 平台四边加渐变上升光效 */
+function makePlatform(size = 5.2, edgeGlow = false) {
+  const grp = new THREE.Group()
   const H = 0.62
   const base = new THREE.Mesh(
     new THREE.BoxGeometry(size, H, size),
@@ -286,6 +307,32 @@ function makePlatform(size = 5.2) {  const grp = new THREE.Group()
   )
   edge.position.y = H / 2
   grp.add(edge)
+
+  if (edgeGlow) {
+    // 四条边的渐变光幕：从底板边缘向上淡出，双面渲染两侧都可见
+    const tex = edgeGlowTexture('rgba(70,160,255,1)')
+    const gh = 2.6
+    const off = size / 2 - 0.06
+    const sides: [number, number, number][] = [
+      [0, off, 0], [0, -off, Math.PI], [off, 0, -Math.PI / 2], [-off, 0, Math.PI / 2],
+    ]
+    for (const [x, z, ry] of sides) {
+      const glow = new THREE.Mesh(
+        new THREE.PlaneGeometry(size - 0.1, gh),
+        new THREE.MeshBasicMaterial({
+          map: tex,
+          transparent: true,
+          opacity: 0.5,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+          side: THREE.DoubleSide,
+        }),
+      )
+      glow.position.set(x, H + gh / 2 - 0.05, z)
+      glow.rotation.y = ry
+      grp.add(glow)
+    }
+  }
   return grp
 }
 
@@ -710,7 +757,8 @@ export class TopoScene {
         : BODY_COLOR
       const grp = new THREE.Group()
       grp.position.copy(pos)
-      grp.add(makePlatform())
+      // hub/主服务平台带四边渐变光幕；普通节点平台保持哑光
+      grp.add(makePlatform(5.2, node.kind !== 'agent'))
 
       // 主体固定蓝，accent 只决定缝隙与点光的颜色
       const body = shapeFor(node)(bodyColorOf(node))
