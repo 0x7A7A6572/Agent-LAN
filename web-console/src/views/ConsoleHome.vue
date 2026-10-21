@@ -32,6 +32,15 @@ const pickCurrent = ref('')
 const sidebarCreateOpen = ref(false)
 const nodesOpen = ref(false)
 
+// 左侧节点卡点击 → 3D 视点导航到该节点。activeNode 只用于卡片高亮，
+// 与「派发权/角色」无关，不落库。
+const topoRef = ref<{ focus: (id: string | null) => void } | null>(null)
+const activeNode = ref<string | null>(null)
+function onNodeSelect(name: string) {
+  activeNode.value = name
+  topoRef.value?.focus(name)
+}
+
 // 悬浮 tab：节点 / 工单 / 日志 / 设置
 type ViewKey = 'nodes' | 'orders' | 'logs' | 'settings'
 const view = ref<ViewKey>('nodes')
@@ -202,6 +211,8 @@ function openRedispatch(order: Order) {
                   v-for="p in store.presences"
                   :key="p.card.name"
                   :presence="p"
+                  :active="activeNode === p.card.name"
+                  @select="onNodeSelect"
                   @pick-role="onPickRole"
                   @delete-node="onDeleteNode"
                 />
@@ -215,6 +226,7 @@ function openRedispatch(order: Order) {
           <!-- 拓扑：Supervisor 在中心，派发链路随接管状态高亮 -->
           <div class="flex min-h-[360px] min-w-0 flex-1 flex-col">
             <NodeTopology3D
+              ref="topoRef"
               :presences="store.presences"
               :orders="store.orders"
               :dispatch-mode="store.pmState.mode"

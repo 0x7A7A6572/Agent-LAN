@@ -23,6 +23,7 @@ export default defineConfig({
       '/files': hub,
       '/worker.sh': hub,
       '/probe.sh': hub,
+      '/bell.sh': hub,
       '/mcp': hub,
     },
   },

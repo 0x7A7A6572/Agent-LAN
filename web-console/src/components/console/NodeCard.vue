@@ -17,10 +17,12 @@ import { useConsoleStore } from '@/stores/console'
 import { logoOf } from '@/composables/useLogo'
 import type { Presence } from '@/types/console'
 
-const props = defineProps<{ presence: Presence }>()
+const props = defineProps<{ presence: Presence; active?: boolean }>()
 const emit = defineEmits<{
   (e: 'pick-role', name: string, role: string): void
   (e: 'delete-node', name: string): void
+  /** 卡片整体被点击：请求把 3D 视点导航到该节点 */
+  (e: 'select', name: string): void
 }>()
 
 const store = useConsoleStore()
@@ -99,7 +101,13 @@ async function send() {
 </script>
 
 <template>
-  <Card class="flex flex-col gap-3 py-4 pb-1 transition-colors" @contextmenu="onContextmenu">
+  <Card
+    class="flex cursor-pointer flex-col gap-3 py-4 pb-1 transition-colors"
+    :class="active ? 'ring-2 ring-blue-500/50' : ''"
+    title="点击在 3D 拓扑中定位该节点"
+    @click="emit('select', presence.card.name)"
+    @contextmenu="onContextmenu"
+  >
     <CardHeader class="px-4">
       <div class="flex items-center gap-2">
         <img v-if="logo" :src="logo" alt="" class="size-5 rounded object-contain" />
@@ -116,7 +124,7 @@ async function send() {
         class="mt-2 flex items-center gap-1 text-left text-xl font-semibold leading-none hover:text-blue-500"
         :class="presence.role ? '' : 'text-muted-foreground/60'"
         title="点击设定角色"
-        @click="emit('pick-role', presence.card.name, presence.role || '')"
+        @click.stop="emit('pick-role', presence.card.name, presence.role || '')"
       >
         {{ presence.role || '设定角色' }}
         <Pencil class="h-3.5 w-3.5 opacity-50" />

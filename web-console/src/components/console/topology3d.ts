@@ -518,6 +518,19 @@ export class TopoScene {
   private opts: TopoSceneOptions
   private lastData: TopoData = { nodes: [], flows: [] }
 
+  // 默认全局视角：focusNode(null) 时飞回这里
+  private homePos = new THREE.Vector3()
+  private homeTarget = new THREE.Vector3(0, 1.5, 0)
+  // 视点飞行状态：null 表示不在飞行中
+  private flight: {
+    fromPos: THREE.Vector3
+    toPos: THREE.Vector3
+    fromTarget: THREE.Vector3
+    toTarget: THREE.Vector3
+    t0: number
+    dur: number
+  } | null = null
+
   constructor(container: HTMLElement, opts: TopoSceneOptions = {}) {
     this.host = container
     this.opts = opts
@@ -539,11 +552,12 @@ export class TopoScene {
     const PITCH = THREE.MathUtils.degToRad(52)
     const YAW = THREE.MathUtils.degToRad(-35)
     const DIST = 62
-    this.camera.position.set(
+    this.homePos.set(
       Math.sin(YAW) * Math.cos(PITCH) * DIST * -1,
       Math.sin(PITCH) * DIST,
       Math.cos(YAW) * Math.cos(PITCH) * DIST,
     )
+    this.camera.position.copy(this.homePos)
     this.camera.lookAt(0, 2, 0)
 
     this.controls = new OrbitControls(this.camera, this.renderer.domElement)
@@ -654,6 +668,8 @@ export class TopoScene {
     const el = this.renderer.domElement
     el.addEventListener('pointermove', this.onPointerMove)
     el.addEventListener('pointerleave', this.onPointerLeave)
+    // 用户一上手拖拽/缩放就中止自动飞行，不跟手抢镜头
+    el.addEventListener('pointerdown', this.onPointerDown)
 
     if (typeof ResizeObserver !== 'undefined') {
       this.resizeObserver = new ResizeObserver(() => this.resize())
@@ -669,6 +685,10 @@ export class TopoScene {
   }
 
   private lastPointer = { x: 0, y: 0 }
+
+  private onPointerDown = () => {
+    this.flight = null
+  }
 
   private onPointerLeave = () => {
     this.pointer.set(-10, -10)
@@ -890,6 +910,44 @@ export class TopoScene {
     this.flows.push({ path, dots, speed: 0.16 + ((seed * 37) % 10) * 0.01 })
   }
 
+  /**
+   * 视点平滑飞行到目标位姿。
+   * 在 rAF 里逐帧插值，而不是一次性赋值：OrbitControls 开着阻尼，
+   * 直接改 position/target 会和阻尼互相拉扯，画面会抖。
+   */
+  private flyTo(pos: THREE.Vector3, target: THREE.Vector3, dur: number) {
+    this.flight = {
+      fromPos: this.camera.position.clone(),
+      toPos: pos.clone(),
+      fromTarget: this.controls.target.clone(),
+      toTarget: target.clone(),
+      t0: performance.now(),
+      dur: Math.max(1, dur),
+    }
+  }
+
+  /**
+   * 把某个节点导航到画面中心；传 null 飞回默认全局视角。
+   * 只拉近距离、不改变观察方向——突然换角度会让人失去方位感。
+   * 目标不在场景里（数据还没到、或传的是服务器侧身份）时静默忽略。
+   */
+  focusNode(id: string | null, distance = 40) {
+    if (this.disposed) return
+    if (!id) {
+      this.flyTo(this.homePos, this.homeTarget, 760)
+      return
+    }
+    const n = this.nodes.get(id)
+    if (!n) return
+    // 节点本体悬在 basePos 上方约 2.35（见 animate 里的 body.position.y），取它作视觉中心
+    const target = n.basePos.clone().add(new THREE.Vector3(0, 2.2, 0))
+    const dir = this.camera.position.clone().sub(this.controls.target)
+    if (dir.lengthSq() < 1e-4) dir.copy(this.homePos)
+    dir.normalize()
+    const dist = THREE.MathUtils.clamp(distance, this.controls.minDistance, this.controls.maxDistance - 1)
+    this.flyTo(target.clone().add(dir.multiplyScalar(dist)), target, 720)
+  }
+
   private resize() {
     if (this.disposed) return
     const w = this.host.clientWidth || 1
@@ -951,6 +1009,15 @@ export class TopoScene {
       this.opts.onHover?.(this.nodes.get(id)!.data, { ...this.lastPointer })
     }
 
+    // 视点飞行：easeInOutCubic 插值，结束后交还给 OrbitControls 的阻尼
+    if (this.flight) {
+      const k = Math.min(1, (performance.now() - this.flight.t0) / this.flight.dur)
+      const e = k < 0.5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2
+      this.camera.position.lerpVectors(this.flight.fromPos, this.flight.toPos, e)
+      this.controls.target.lerpVectors(this.flight.fromTarget, this.flight.toTarget, e)
+      if (k >= 1) this.flight = null
+    }
+
     this.controls.update()
     this.composer.render()
   }
@@ -960,6 +1027,23 @@ export class TopoScene {
     return this.lastData
   }
 
+  /** 当前相机位姿（排障与端到端验证用，不参与渲染逻辑） */
+  cameraState() {
+    return {
+      pos: this.camera.position.toArray() as [number, number, number],
+      target: this.controls.target.toArray() as [number, number, number],
+      flying: this.flight !== null,
+    }
+  }
+
+  /** 某节点投影到屏幕的归一化坐标（-1..1，0,0 = 画面正中），验证导航落点用 */
+  projectNode(id: string): [number, number] | null {
+    const n = this.nodes.get(id)
+    if (!n) return null
+    const v = n.basePos.clone().add(new THREE.Vector3(0, 2.2, 0)).project(this.camera)
+    return [v.x, v.y]
+  }
+
   dispose() {
     this.disposed = true
     cancelAnimationFrame(this.raf)
@@ -967,6 +1051,7 @@ export class TopoScene {
     const el = this.renderer.domElement
     el.removeEventListener('pointermove', this.onPointerMove)
     el.removeEventListener('pointerleave', this.onPointerLeave)
+    el.removeEventListener('pointerdown', this.onPointerDown)
     this.disposeLayer(this.nodeLayer)
     this.disposeLayer(this.wireLayer)
     this.disposeLayer(this.decorLayer)

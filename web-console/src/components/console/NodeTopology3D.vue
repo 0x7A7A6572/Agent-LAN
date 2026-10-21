@@ -19,10 +19,26 @@ const hostRef = ref<HTMLElement | null>(null)
 interface SceneHandle {
   setData: (d: TopoData) => void
   dispose: () => void
+  focusNode: (id: string | null, distance?: number) => void
 }
 const scene = shallowRef<SceneHandle | null>(null)
 const threeLoading = ref(true)
 const tooltip = ref<{ node: TopoNode; x: number; y: number } | null>(null)
+/** 3D 引擎还没下载完时的导航请求，等场景就绪再补执行 */
+let pendingFocus: string | null = null
+
+/**
+ * 把视点导航到某个节点（供左侧节点卡点击调用）。
+ * 传 null 回到全局视角。场景未就绪时先记下来，不丢用户操作。
+ */
+function focus(id: string | null) {
+  if (!scene.value) {
+    pendingFocus = id
+    return
+  }
+  scene.value.focusNode(id)
+}
+defineExpose({ focus })
 
 /**
  * 主服务本体的真实地址。
@@ -179,6 +195,20 @@ onMounted(async () => {
   s.setData(topoData.value)
   scene.value = s
   threeLoading.value = false
+  // 仅开发态：暴露只读视点，供端到端验证断言「导航确实发生了」。
+  // 生产构建里 import.meta.env.DEV 为 false，这段不会进包。
+  if (import.meta.env.DEV) {
+    ;(window as unknown as Record<string, unknown>).__topoDebug = {
+      camera: () => s.cameraState(),
+      project: (id: string) => s.projectNode(id),
+      nodes: () => s.data().nodes.map((n) => ({ id: n.id, label: n.label })),
+    }
+  }
+  // 组件挂载前点过节点卡：场景就绪后补一次导航
+  if (pendingFocus) {
+    s.focusNode(pendingFocus)
+    pendingFocus = null
+  }
 })
 
 onBeforeUnmount(() => {
