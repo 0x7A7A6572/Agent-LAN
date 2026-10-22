@@ -248,8 +248,13 @@ function mergeHooks(settings, scriptPath) {
 }
 
 function runInstall() {
-  const { node, error } = resolveNode();
-  const destDir = node?.dir ?? path.join(ROOT, process.env.AGENT || "workbuddy");
+  // MAC_FORCE_AGENT 由 probe.sh 传：安装时节点还没起，不能靠「活着的节点」猜目录，
+  // 更不能因为本机另有活着的 agent 就把 hook 装到别人目录里
+  const forced = process.env.MAC_FORCE_AGENT || "";
+  const { node, error } = forced ? { node: null, error: "" } : resolveNode();
+  const destDir = forced
+    ? path.join(ROOT, forced)
+    : (node?.dir ?? path.join(ROOT, process.env.AGENT || "workbuddy"));
   fs.mkdirSync(destDir, { recursive: true });
   const dest = path.join(destDir, "hook-ask.mjs");
   fs.copyFileSync(process.argv[1], dest);

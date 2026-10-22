@@ -120,6 +120,19 @@ if [ "$1" = "--install" ]; then
     rm -f "$INSTALL_DIR/bell.sh"
     HAS_BELL=0
   fi
+  # 提问 hook：把 agent 的 AskUserQuestion 上报到控制台，人可在控制台代答。
+  # 可选能力：hub 没提供 /hook-ask.mjs、或本机没有 node，就静默跳过，不阻断安装。
+  HAS_HOOK=0
+  if command -v node >/dev/null 2>&1 && curl -sf --noproxy '*' "http://$SERVER/hook-ask.mjs" -o "$INSTALL_DIR/hook-ask.mjs" 2>/dev/null; then
+    chmod +x "$INSTALL_DIR/hook-ask.mjs" 2>/dev/null
+    # MAC_FORCE_AGENT 钉死安装目录：本机已有别的 agent 活着时，不许把 hook 装到别人目录
+    HOOK_OUT=$(MAC_FORCE_AGENT="$INSTALL_AGENT" node "$INSTALL_DIR/hook-ask.mjs" install 2>&1)
+    HOOK_RC=$?
+    echo "$HOOK_OUT" | sed 's/^/    /'
+    [ "$HOOK_RC" -eq 0 ] && HAS_HOOK=1
+  else
+    rm -f "$INSTALL_DIR/hook-ask.mjs"
+  fi
   if [ ! -f "$INSTALL_DIR/node.json" ]; then
     cat > "$INSTALL_DIR/node.json" <<EOF
 {
@@ -158,8 +171,10 @@ EOF
   这一轮真正收工（给出最终答复）时显式报 state="idle"。
   **不要每轮 working/idle 来回切**——用户连续追问时那样会刷屏抖动，
   连续干同一件事就保持 working。
-- 需要人工确认：mac_report(state="input-required", text=等谁确认什么)
-  （没有 request_input 这个工具），控制台会提醒，答复以留言送达。
+- 需要人工确认：优先直接用 AskUserQuestion 提问——装了提问 hook 时，问题会同步到
+  控制台节点卡，人在那边点选后你当场拿到答复（hook 以 deny+reason 把答案交回来，
+  看到「这是人在控制台代答的结果」就不用再问一遍）。没人答时本地提问框照常弹。
+  也可以用 mac_report(state="input-required", text=等谁确认什么) 做纯文本上报。
 - 规范全文：curl -s http://__SERVER__/mcp/install.md ，或调工具 mac_get_guide。
 - 上报必须带 name="__NAME__"，否则状态不写回工单，等于白干。
 - 常驻 worker 已在后台时不要重复起多个，否则互相抢任务导致状态抖动。
@@ -195,6 +210,11 @@ HINTEOF
     echo "唤起：bash $INSTALL_DIR/bell.sh（处理完一次后要重新起）"
   else
     echo "[!] hub 未提供 /bell.sh，本次没装门铃；升级 hub 后重跑 --install 即可补上"
+  fi
+  if [ "${HAS_HOOK:-0}" = "1" ]; then
+    echo "提问上报：已装 hook（AskUserQuestion → 控制台，可代答）；重启会话后生效"
+  else
+    echo "[!] 未装提问 hook（缺 node 或 hub 未提供 /hook-ask.mjs）；不影响接活与上报"
   fi
   echo "临时换名调试：NAME=xxx bash $INSTALL_DIR/worker.sh"
   exit 0
