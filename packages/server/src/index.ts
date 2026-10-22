@@ -965,7 +965,8 @@ export function createServer(options: ServerOptions): http.Server {
    * 超时返回 null 让本地框正常弹。上限 20s——再长会触发 CLI 的 hook 超时判拦截。
    */
   async function waitAnswer(name: string, id: string | undefined, waitMs: number): Promise<AnswerEnvelope | null> {
-    const deadline = Date.now() + Math.max(0, Math.min(waitMs, 20000));
+    // 上限 3 分钟：hook 那边只等几秒，但 mac_ask_console 需要人慢慢来
+    const deadline = Date.now() + Math.max(0, Math.min(waitMs, 180000));
     for (;;) {
       const q = questionStore.get(name);
       if (q?.answer && !q.answer.pickedUp && (!id || q.id === id)) {
@@ -974,7 +975,10 @@ export function createServer(options: ServerOptions): http.Server {
           by: q.answer.by, text: q.answer.text, choice: q.answer.choice
         };
         q.answer.pickedUp = true;
-        clearQuestion(name, "答复已被节点取走（抢占式代答）");
+        // 不立刻删题卡：控制台要停在「已答复」回看态，否则人只看到闪一下。
+        // 真正回收交给 hook 的 PostToolUse（done）与下面的 TTL 兜底。
+        registry.setWaiting(name, undefined);
+        pushPresence();
         return env;
       }
       if (Date.now() >= deadline) return null;
@@ -1427,6 +1431,14 @@ export function createServer(options: ServerOptions): http.Server {
       res.end(installMd());
       return;
     }
+    if (req.method === "GET" && url.pathname === "/console/presence") {
+      // 一次性快照：给 SSE 兜底轮询用。真实网络里长连接会被代理/中间设备悄悄掐断，
+      // 表现为「页面数据停在断开那一刻，之后所有实时事件都收不到」——
+      // 控制台必须有降级通道，否则节点等人时人根本看不到题卡。
+      res.writeHead(200, { "content-type": "application/json", connection: "close" });
+      res.end(JSON.stringify({ presences: withRoles(registry.list()), at: Date.now() }));
+      return;
+    }
     if (req.method === "GET" && url.pathname === "/console/presence/stream") {
       res.writeHead(200, {
         // charset 必须显式给：部分代理/浏览器对无 charset 的 event-stream
@@ -1791,13 +1803,22 @@ export function createServer(options: ServerOptions): http.Server {
       const title = b.title ? String(b.title).slice(0, 300) : undefined;
       if (!questions.length && !title) return json(400, { ok: false, error: "questions 与 title 至少给一个" });
       // hook 重试（同一问连发两次）：沿用原题，不刷屏也不丢原来的答复态
+      // notify（卡片弹出）和 ask（用户点完）会先后各报一次同一问，两次间隔可能几十秒，
+      // 所以「未答的同一问」一律沿用原 id —— 否则 ask 会重建题卡，控制台里闪一下
       const prev = questionStore.get(name);
-      if (prev && Date.now() - prev.at < 5000 && (prev.questions[0]?.question ?? "") === (questions[0]?.question ?? "")) {
+      const prevQ = prev?.questions[0]?.question ?? "";
+      const nextQ = questions[0]?.question ?? "";
+      // 文本比对之外再加一层「同一会话 + 5 分钟内」：两个来源（transcript / tool_input）
+      // 可能对同一问给出细微不同的文本，只认文本会把人在控制台给出的答复丢掉
+      const sameSession =
+        !!b.sessionId && String(b.sessionId) === (prev?.sessionId ?? "") && !!prev && Date.now() - prev.at < 300000;
+      const sameQuestion = prevQ === nextQ || sameSession;
+      if (prev && !prev.answer && sameQuestion) {
         return json(200, { ok: true, id: prev.id, deduped: true });
       }
       // 同一问在 10 分钟内被答过又重问：直接把答案还回去，不再建新题
       // （抢占式 deny 之后模型有时会重试同一个提问，靠这条断掉死循环）
-      if (prev?.answer && Date.now() - prev.answer.at < 600000 && (prev.questions[0]?.question ?? "") === (questions[0]?.question ?? "")) {
+      if (prev?.answer && Date.now() - prev.answer.at < 600000 && sameQuestion) {
         return json(200, { ok: true, id: prev.id, answered: true, answer: prev.answer });
       }
       const q: NodeQuestion = {
@@ -2018,6 +2039,33 @@ const mcpDeps: McpFacadeDeps = {
   orderCancel: (id, by) => cancelOrder(id, by),
   orderRedispatch: (id, assignee, by, coordination) => redispatchOrder(id, assignee, by, coordination),
   getGuide: () => installMd(),
+  // mac_ask_console：题卡推控制台并长等答复。
+  // 这是「只点一次」的唯一可行路径 —— AskUserQuestion 的 hook 在用户点完之后才触发，
+  // 已弹出的卡片没有任何外部通道能关掉，只能从一开始就不弹。
+  askConsole: async (name, questions, title, waitMs) => {
+    const qs: AskQuestion[] = (Array.isArray(questions) ? questions : [])
+      .slice(0, 8)
+      .map((raw: any) => ({
+        question: String(raw?.question ?? "").trim(),
+        header: raw?.header ? String(raw.header).slice(0, 40) : undefined,
+        multiSelect: !!raw?.multiSelect,
+        options: (Array.isArray(raw?.options) ? raw.options : [])
+          .slice(0, 8)
+          .map((o: any) => ({ label: String(o?.label ?? "").trim(), description: o?.description ? String(o.description).slice(0, 200) : undefined }))
+          .filter((o: AskOption) => o.label)
+      }))
+      .filter(q => q.question);
+    const q: NodeQuestion = {
+      id: randomUUID(), at: Date.now(), kind: "mcp-ask",
+      title: title ? String(title).slice(0, 300) : undefined,
+      sessionId: "mcp", questions: qs
+    };
+    setQuestion(name, q);
+    const ans = await waitAnswer(name, q.id, waitMs);
+    return ans
+      ? { answered: true, id: q.id, text: ans.text, by: ans.by }
+      : { answered: false, id: q.id };
+  },
   log
 };
 function mcpRoute(body: string, req: http.IncomingMessage, res: http.ServerResponse, sourceIp: string): Promise<void> {

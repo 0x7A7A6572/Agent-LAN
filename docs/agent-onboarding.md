@@ -258,28 +258,55 @@ PM 连续决策失败时控制台会标红提示，但派发权不会自动放�
 
 ---
 
-### 提问上报：hook-ask.mjs（可选，装了控制台才看得见你在问什么）
+### 需要人拍板：优先 `mac_ask_console`，别用 AskUserQuestion
 
-agent 在会话里用 AskUserQuestion 提问时，问题只留在会话里，hub 完全不知情。
-装一个 hook 就能把它送到控制台：节点卡出现「回答」入口，人点开弹层选完，答复作为**留言**回到你手上。
+结论先说：**会话里一弹 AskUserQuestion 的卡片，控制台就抢不到「点击前」了**。实测 `PreToolUse`
+要等用户点完卡片才触发（相差 2 分 31 秒），那时 `tool_input` 里已经是他选好的答案；而卡片一旦
+弹出，没有任何外部通道能把它关掉。所以「人只在控制台点一次」的唯一做法，是**从一开始就不弹卡片**。
+
+需要人定夺时，调 MCP 工具 `mac_ask_console`：
+
+```
+mac_ask_console(
+  name="<你的节点名>",
+  title="<哪个会话在问什么>",
+  waitMs=120000,
+  questions=[{ question, header?, multiSelect?, options:[{ label, description? }] }]
+)
+```
+
+- 题卡直接出现在控制台（顶部提醒条 + 节点卡「回答」入口），人点完当场返回
+- 返回 `answered: true` + `answer` 文本 → 按它继续，不要重复提问
+- 返回 `answered: false` → 等待时间内没人应答，这时才退回 `AskUserQuestion` 问本地用户
+- 不弹本地卡片、不占 CLI 的 hook 超时，最长可等 10 分钟（`waitMs` 上限 600000）
+
+`AskUserQuestion` 仍然适用：只是给人看的确认、不需要控制台参与的场景。
+
+---
+
+### hook-ask.mjs：让 Agent 侧的卡片也能被控制台看见（旁路，建议装）
+
+即使按上面规范走也建议装：节点上别处（子 agent、遗留会话）弹的卡片一样能同步到控制台。
 
 ```bash
-# hub 主机上（新节点也可从 hub 下载后本地跑）
 curl -s http://<hub>:9600/hook-ask.mjs -o hook-ask.mjs
 node hook-ask.mjs install          # 装进 ~/.mac-worker/<agent>/ 并合并到 settings.json
 node hook-ask.mjs print            # 只想手工粘贴 hooks 片段时用
 ```
 
-装了之后：
+挂三个事件，分工不同：
 
-- `PreToolUse(^AskUserQuestion$)` → `POST /worker/ask`，控制台置「等人工 + 题卡」
-- `PostToolUse(^AskUserQuestion$)` → `POST /worker/ask {clear:true}`，题卡自动消失
-- **抢占式代答**：hook 上报后会在 `PreToolUse` 挂 `GET /worker/ask/answer?waitMs=` 等 `MAC_ASK_WAIT_MS`（默认 5000ms，0 = 关闭）。有人在这窗口里答了 → hook 直接输出 `permissionDecision: "deny"` + 答复正文，模型当场拿到答案继续，本地提问框不弹；没人答 → hook 静默退出，本地框照常弹
-- 答复不是留言：写在这次提问上（`q.answer`），随 `mac_pull_task` 的 `answers[]` 结构化下发（`{questionId, text, choice}`），取走即回收题卡
-- 程序代答：`POST /worker/ask/answer {name, id?, choice|text, by}` —— PM / 其它节点 / 脚本都能替人答，与控制台同一套写入语义
+| 事件 | 时机 | 作用 |
+|---|---|---|
+| `Notification`（matcher=`permission_prompt`） | **卡片弹出的瞬间** | 读 transcript 取出问题与选项 → `POST /worker/ask`，控制台立刻出现题卡 |
+| `PreToolUse`（matcher=`^AskUserQuestion$`） | 用户点完之后 | 只查一次「控制台是否已替我答过」：答过就 `deny` + 答复正文回填模型 |
+| `PostToolUse`（同 matcher） | 工具结束 | `POST /worker/ask {clear:true}` 回收题卡 |
 
-约束（脚本已内置，改代码别破坏）：
+边界（改代码前务必看）：
 
-- hook 3s 硬超时、任何异常都 `exit 0`：hub 不可达也不能挡住提问
-- 不往 stdout 写决策：PreToolUse 输出 allow 会跳过权限确认
-- 节点名从 `~/.mac-worker/*/node.json` 反查，只认 120s 内有心跳的节点；同机多节点可用 `MAC_NODE=<名字>` 钉死
+- `Notification` 的输出会被 CLI **直接丢弃**（`executeNotificationHooks` 不接返回值），它只能「看见」不能「代答」
+- 真正能把答案送进模型上下文的只有 `PreToolUse` 的 `permissionDecision: "deny"` + reason
+- 答复不是留言：写在这次提问上（`q.answer`），也随 `mac_pull_task` 的 `answers[]` 结构化下发
+- 程序代答：`POST /worker/ask/answer {name, id?, choice|text, by}`，与控制台同一套写入语义
+- hook 3s 硬超时、异常一律 `exit 0`：hub 不可达也不能挡住提问；stdout 不写决策（写 allow 会跳过权限确认）
+- 节点身份从 `~/.mac-worker/*/node.json` 反查；心跳全过期时退化为「唯一节点」或「最新节点」，同机多节点用 `MAC_NODE=<名字>` 钉死

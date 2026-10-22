@@ -14,6 +14,11 @@
 WORKER_VERSION=__VERSION__
 
 # 安装根 ~/.mac-worker/<agent>/：每 agent 一目录，脚本/配置/身份互不干扰
+# 只访问局域网 hub，必须绕过 http_proxy/HTTPS_PROXY。
+# 踩过：开发机装了抓包/公司代理（env 里有 http_proxy=127.0.0.1:xxxxx），curl 访问
+# 127.0.0.1:9600 会被送进代理 → 全部失败，worker 静默退化成「起不来 + 心跳不动」。
+export no_proxy="*" NO_PROXY="*"
+
 # AGENT 判定：env AGENT > 从安装路径提取 > 缺省 default；WSL 回退共享 Windows 主目录
 MAC_ROOT=""
 if [ -d "$HOME/.mac-worker" ]; then

@@ -2,14 +2,22 @@
 /**
  * Agent-LAN 提问 hook —— 把 agent 的 AskUserQuestion 送到 hub，让控制台能看见并作答。
  *
- * 挂法（CLI 的 hooks，PreToolUse + PostToolUse 同一 matcher）：
- *   PreToolUse  matcher=^AskUserQuestion$  -> node hook-ask.mjs ask
- *   PostToolUse matcher=^AskUserQuestion$  -> node hook-ask.mjs done
+ * 挂法（CLI 的 hooks）：
+ *   Notification  matcher=permission_prompt  -> node hook-ask.mjs notify   ← 卡片弹出时（点击前）
+ *   PreToolUse    matcher=^AskUserQuestion$   -> node hook-ask.mjs ask     ← 用户点完之后
+ *   PostToolUse   matcher=^AskUserQuestion$   -> node hook-ask.mjs done
+ *
+ * 为什么需要两个事件（实测结论，别删）
+ *   PreToolUse 在「用户点完卡片」之后才触发（实测相差 2 分 31 秒），此时 tool_input 里已是
+ *   用户的选择，控制台再答没有意义。真正「卡片弹出」的时刻只有 Notification 事件能抓到
+ *   （早于点击几十秒），但它的输出被 CLI 直接丢弃（executeNotificationHooks 不接返回值），
+ *   没有回填答案的通道。所以：Notification 负责「点击前上报」，PreToolUse 负责「事后回填」。
  *
  * 用法：
  *   node hook-ask.mjs install    把本脚本装进 ~/.mac-worker/<agent>/ 并合并进 settings.json
  *   node hook-ask.mjs print      只打印要合并的 hooks 片段（手工粘贴用）
- *   node hook-ask.mjs ask        hook 入口：读 stdin，上报提问
+ *   node hook-ask.mjs notify     hook 入口：卡片弹出，从 transcript 读出提问并上报（不等答复）
+ *   node hook-ask.mjs ask        hook 入口：读 stdin，上报提问（用户已点完，仅事后续期）
  *   node hook-ask.mjs done       hook 入口：读 stdin，清除该提问
  *
  * 铁律：hook 绝不能拖住或拦住工具调用。
@@ -27,10 +35,21 @@ const TIMEOUT_MS = 3000;
 /** 节点存活窗口：worker 心跳 10s，留 120s 余量；超过就当没有活着的节点 */
 const LIVE_MS = 120_000;
 /**
- * 抢占式等代答：提问前挂在这里等这么久，控制台答了就直接把答案交给模型。
- * 0 = 关掉抢占（只上报、不等待）。上限 10s——再长会顶到 CLI 的 hook 超时判拦截。
+ * ask（PreToolUse）在用户点完卡片之后才触发，此时再「等控制台答复」没有意义：
+ * 人要么在点击前已经在控制台答过（那就直接 deny 回填），要么就是在卡片里答的。
+ * 所以默认不等，只查一次「控制台有没有替我答过」。
+ * 需要真抢占的调用方（MCP 的 mac_ask_console）自己传更长的等待。
+ * 取值优先级：env MAC_ASK_WAIT_MS > node.json 的 askWaitMs > 0。
  */
-const ASK_WAIT_MS = Math.max(0, Math.min(Number(process.env.MAC_ASK_WAIT_MS ?? 5000) || 0, 10_000));
+const DEFAULT_WAIT_MS = 0;
+const MAX_WAIT_MS = 15_000;
+function pickWaitMs(node) {
+  const envRaw = process.env.MAC_ASK_WAIT_MS;
+  const env = envRaw === undefined || envRaw === "" ? NaN : Number(envRaw);
+  const cfg = Number(node?.askWaitMs);
+  const raw = Number.isFinite(env) ? env : (Number.isFinite(cfg) && cfg > 0 ? cfg : DEFAULT_WAIT_MS);
+  return Math.max(0, Math.min(raw || 0, MAX_WAIT_MS));
+}
 
 const ROOT = path.join(os.homedir(), ".mac-worker");
 
@@ -70,7 +89,9 @@ function listNodes() {
         online: state.online !== false && !!state.updatedAt,
         at,
         working: state.working ?? null,
-        role: raw.role ?? ""
+        role: raw.role ?? "",
+        // 节点级等待窗口：忘带这个字段，pickWaitMs 就永远拿默认 5s（踩过）
+        askWaitMs: raw.askWaitMs
       });
     } catch { /* 半个文件或坏 JSON：跳过 */ }
   }
@@ -87,11 +108,23 @@ function resolveNode() {
     return hit ? { node: hit } : { error: "MAC_NODE=" + envName + " 找不到对应 node.json" };
   }
   const live = nodes.filter(n => n.online && Date.now() - n.at < LIVE_MS);
-  if (!live.length) return { error: "没有活着的节点（worker 未运行或已超 120s 无心跳）" };
-  const busy = live.filter(n => n.working);
-  const pool = busy.length ? busy : live;
-  pool.sort((a, b) => b.at - a.at);
-  return { node: pool[0] };
+  if (live.length) {
+    const busy = live.filter(n => n.working);
+    const pool = busy.length ? busy : live;
+    pool.sort((a, b) => b.at - a.at);
+    return { node: pool[0] };
+  }
+  // 心跳全过期：GUI 会话里 worker 常不常驻，拿它当否决条件会让 hook 永远静默跳过。
+  // 本机只有一个 node.json 时归属没有歧义 → 直接用；多个才需要 MAC_NODE 指定。
+  const withBeat = nodes.filter(n => n.at);
+  if (withBeat.length === 1) {
+    return { node: withBeat[0], stale: Math.round((Date.now() - withBeat[0].at) / 1000) };
+  }
+  if (withBeat.length > 1) {
+    withBeat.sort((a, b) => b.at - a.at);
+    return { node: withBeat[0], stale: Math.round((Date.now() - withBeat[0].at) / 1000), ambiguous: withBeat.length };
+  }
+  return { error: "没有可用的节点身份（node.json 里没有 state.updatedAt，先跑一次 worker.sh）" };
 }
 
 // ─── hook stdin ───────────────────────────────────────────────────────
@@ -169,13 +202,77 @@ function idFile(node, sessionId) {
   return path.join(node.dir, ".hook-ask." + safe + ".id");
 }
 
+// ─── notify：卡片弹出的真实时刻（比 PreToolUse 早几十秒）─────────────────
+/**
+ * 从 transcript 尾部找出最后一次 AskUserQuestion 调用。
+ * Notification 的 payload 只有一句 message，问题与选项只能这么拿。
+ * 只读尾部 512KB：transcript 可能是几 MB，全量读会让 hook 超过 5s 超时。
+ */
+function readLastAsk(transcriptPath) {
+  if (!transcriptPath) return null;
+  try {
+    const st = fs.statSync(transcriptPath);
+    const size = Math.min(st.size, 512 * 1024);
+    const fd = fs.openSync(transcriptPath, "r");
+    const buf = Buffer.alloc(size);
+    fs.readSync(fd, buf, 0, size, st.size - size);
+    fs.closeSync(fd);
+    const lines = buf.toString("utf8").split("\n");
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const line = lines[i].trim();
+      if (!line.startsWith("{") || !line.includes("AskUserQuestion")) continue;
+      let j;
+      try { j = JSON.parse(line); } catch { continue; }
+      if (j.type !== "function_call" || j.name !== "AskUserQuestion") continue;
+      let args = j.arguments;
+      if (typeof args === "string") { try { args = JSON.parse(args); } catch { continue; } }
+      if (Array.isArray(args?.questions) && args.questions.length) return args.questions;
+    }
+  } catch { /* 读不到就当没有 */ }
+  return null;
+}
+
+async function runNotify() {
+  const raw = await readStdin();
+  let hook = {};
+  try { hook = JSON.parse(raw || "{}"); } catch { logLine("notify stdin 不是 JSON，忽略"); return; }
+  const type = String(hook.notification_type ?? "");
+  const msg = String(hook.message ?? "");
+  // 只接「等你操作某个工具」这一类；空闲提醒、完成提醒跟提问无关
+  if (type !== "permission_prompt" && !/AskUserQuestion/i.test(msg)) return;
+  const questions = readLastAsk(hook.transcript_path);
+  if (!questions) { logLine("notify 收到通知，但 transcript 里没找到提问"); return; }
+  const { node, error, stale } = resolveNode();
+  if (error) { logLine("notify 跳过：" + error); return; }
+  if (stale !== undefined) logLine(`notify 用过期心跳的节点 ${node.name}（${stale}s 前）`);
+  const r = await post(node.server, {
+    name: node.name,
+    kind: "ask",
+    title: titleOf({ cwd: hook.cwd }, node),
+    taskId: node.working?.id ?? node.working?.taskId ?? undefined,
+    sessionId: hook.session_id ?? undefined,
+    questions
+  });
+  let res = {};
+  try { res = JSON.parse(r.text); } catch { /* 老 hub 只回 ok */ }
+  logLine(`notify ${node.name} <- ${questions.length} 问 -> ${r.status}${r.ok ? "" : " " + r.text.slice(0, 100)}`);
+  // 记下 id：用户点完卡片后 done 靠它精确清除这一问
+  if (r.ok && res.id) { try { fs.writeFileSync(idFile(node, hook.session_id), res.id); } catch { /* 落盘失败只影响精确清除 */ } }
+  // 注意：Notification 的输出会被 CLI 丢弃，这里不要写任何决策
+}
+
 async function runAsk() {
   const raw = await readStdin();
   let hook = {};
   try { hook = JSON.parse(raw || "{}"); } catch { logLine("stdin 不是 JSON，忽略"); return; }
-  const { node, error } = resolveNode();
+  const { node, error, stale, ambiguous } = resolveNode();
   if (error) { logLine("跳过：" + error); return; }
-  const questions = hook?.tool_input?.questions;
+  if (stale !== undefined) {
+    logLine(`用过期心跳的节点 ${node.name}（${stale}s 前${ambiguous ? "，本机 " + ambiguous + " 个候选取最新" : ""}）`);
+  }
+  // 提问文本必须和 notify 完全同源（都从 transcript 读），否则 hub 里的「同一问」
+  // 判定会失配 —— 后果是 ask 重建题卡、把人在控制台已经给出的答复丢掉。
+  const questions = readLastAsk(hook.transcript_path) ?? hook?.tool_input?.questions;
   const payload = {
     name: node.name,
     kind: "ask",
@@ -195,14 +292,15 @@ async function runAsk() {
   try {
     const id = res?.id;
     if (id) fs.writeFileSync(idFile(node, hook.session_id), id);
-    if (!ASK_WAIT_MS) return;
+    const waitMs = pickWaitMs(node);
+    if (!waitMs) { logLine(`${node.name} 抢占已关（waitMs=0），只上报不等`); return; }
     // 抢占式：等控制台代答；等到就 deny 放行，等不到就静默退出让本地框正常弹
-    const answers = await waitAnswer(node.server, node.name, id, ASK_WAIT_MS);
+    const answers = await waitAnswer(node.server, node.name, id, waitMs);
     if (answers.length) {
-      logLine(`${node.name} 抢占成功，代答放行（${ASK_WAIT_MS}ms 窗口）`);
+      logLine(`${node.name} 抢占成功，代答放行（${waitMs}ms 窗口）`);
       denyWithAnswer(answers[0]);
     } else {
-      logLine(`${node.name} ${ASK_WAIT_MS}ms 内无人代答，交给本地框`);
+      logLine(`${node.name} ${waitMs}ms 内无人代答，交给本地框`);
     }
   } catch { /* id 落盘失败只影响 done 的精确清除 */ }
 }
@@ -211,8 +309,11 @@ async function runDone() {
   const raw = await readStdin();
   let hook = {};
   try { hook = JSON.parse(raw || "{}"); } catch { /* 空 stdin 也照清 */ }
-  const { node, error } = resolveNode();
+  const { node, error, stale, ambiguous } = resolveNode();
   if (error) { logLine("跳过：" + error); return; }
+  if (stale !== undefined) {
+    logLine(`用过期心跳的节点 ${node.name}（${stale}s 前${ambiguous ? "，本机 " + ambiguous + " 个候选取最新" : ""}）`);
+  }
   let expectId = "";
   const file = idFile(node, hook.session_id);
   try { expectId = fs.readFileSync(file, "utf8").trim(); fs.unlinkSync(file); } catch { /* 没答过就没 id */ }
@@ -237,10 +338,19 @@ function hookEntry(scriptPath, mode) {
 
 function mergeHooks(settings, scriptPath) {
   settings.hooks = settings.hooks ?? {};
-  for (const ev of ["PreToolUse", "PostToolUse"]) {
-    const kept = (settings.hooks[ev] ?? []).filter(
+  const drop = ev =>
+    (settings.hooks[ev] ?? []).filter(
       e => !(e?.hooks ?? []).some(h => String(h?.command ?? "").includes(MARKER))
     );
+  // Notification 是「卡片弹出」唯一抓得到的时机：它比 PreToolUse 早几十秒，
+  // matcher 匹配 notification_type，提问这一类固定是 permission_prompt
+  settings.hooks.Notification = drop("Notification");
+  settings.hooks.Notification.push({
+    matcher: "permission_prompt",
+    hooks: [{ type: "command", command: 'node "' + scriptPath.replace(/\\/g, "/") + '" notify', timeout: 8 }]
+  });
+  for (const ev of ["PreToolUse", "PostToolUse"]) {
+    const kept = drop(ev);
     kept.push(hookEntry(scriptPath, ev === "PreToolUse" ? "ask" : "done"));
     settings.hooks[ev] = kept;
   }
@@ -289,6 +399,7 @@ function runPrint() {
 try {
   if (MODE === "install") runInstall();
   else if (MODE === "print") runPrint();
+  else if (MODE === "notify") await runNotify();
   else if (MODE === "done") await runDone();
   else await runAsk();
 } catch (err) {
