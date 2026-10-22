@@ -11,7 +11,7 @@
 #
 # 边界
 #   不碰 hub、不领活、不写 node.json、不参与 worker 自更新（不会被覆盖）。
-#   worker 挂了它也不接管，只在 state 长期不更新时叫醒会话去重连。
+#   worker 挂了它也不接管，只在 state 长期不更新时叫醒会话去排查（worker 还是 hub）
 #
 # 用法
 #   bash ~/.mac-worker/<agent>/bell.sh          # 后台常驻，命中即退出
@@ -20,7 +20,8 @@
 #
 # 退出码
 #   0 = 有新任务 / 新排队 / 新留言（去读 node.json 拿详情）
-#   3 = worker 疑似已死（state.updatedAt 超过阈值没更新），需要重连 worker
+#   3 = 节点静默（state.updatedAt 超阈值没刷新）。输出会区分两种事故：
+#       hub 不可达（去重启 hub）/ hub 正常但 worker 死了（去重连 worker）
 #   4 = 缺少 python，无法解析 node.json
 
 set -u
@@ -54,7 +55,7 @@ fi
 #
 # 输出一行 ASCII（Windows 控制台码页会把中文打乱，详情请回读 node.json）：
 #   HIT <reason> node=… working=… pending=N messages=N
-#   STALE <age>s …
+#   STALE <age>s … server=<hub地址>
 #   NOHIT
 decide() {
   "$PY" - "$NJ" "$SEEN" "$STALE_SEC" <<'PY' 2>/dev/null
@@ -98,14 +99,18 @@ if hit:
     print("HIT %s %s" % (reason, detail))
     raise SystemExit
 
-# 静默守卫：state.updatedAt 长时间不刷新 ⇒ worker 已死，叫会话去重连
+# 静默守卫：state.updatedAt 长时间不刷新 ⇒ 有人死了，但**不一定死在本地**。
+# 这一列只在 worker 成功 pull 到 hub 之后才更新，所以 hub 挂掉时它也会冻住。
+# 因此只报「静默 + hub 地址」，由 bash 层再探一次 hub，区分两种事故：
+#   本地 worker 死了   → 去重连 worker
+#   hub 不可达         → 去重启 hub（99% 是这种情况，报「worker 已死」会带偏排查方向）
 try:
     t = datetime.datetime.fromisoformat(str(st.get("updatedAt")).replace("Z", "+00:00"))
     age = int((datetime.datetime.now(datetime.timezone.utc) - t).total_seconds())
 except Exception:
     age = 0
 if age > stale:
-    print("STALE %ds %s" % (age, detail))
+    print("STALE %ds %s server=%s" % (age, detail, cur.get("server") or ""))
 else:
     print("NOHIT")
 PY
@@ -130,9 +135,16 @@ while :; do
       exit 0
       ;;
     STALE*)
-      # 静默守卫：只报一次，避免 worker 长时间不在时反复叫醒会话
+      # 静默守卫：只报一次，避免长时间不在时反复叫醒会话。
+      # 先探 hub：连不上就是 hub 挂了，不是 worker 死了——这两种事故的处理动作完全不同。
       if [ ! -f "$FLAG" ]; then
-        echo "BELL: $OUT —— worker 疑似已死，请重连"
+        SRV="${OUT#* server=}"
+        [ "$SRV" = "$OUT" ] && SRV=""
+        if [ -n "$SRV" ] && ! curl -sf -o /dev/null --max-time 3 --noproxy '*' "http://$SRV/console" 2>/dev/null; then
+          echo "BELL: hub 不可达 http://$SRV —— 本地 worker 没错，是主服务挂了，去重启 hub"
+        else
+          echo "BELL: $OUT —— hub 正常但本地 worker 静默，请重连 worker"
+        fi
         : > "$FLAG"
         exit 3
       fi
