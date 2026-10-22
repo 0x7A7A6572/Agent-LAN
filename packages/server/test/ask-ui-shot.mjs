@@ -34,10 +34,10 @@ await page.waitForTimeout(1800);
 await page.screenshot({ path: OUT + "/ask-ui-1-list.png" });
 console.log("① 列表态 ->", OUT + "/ask-ui-1-list.png");
 
-// 找入口：banner 里的「回答」或节点卡上的「回答」
-const btn = page.getByRole("button", { name: /回答/ }).first();
+// 找入口：banner 里的「看题」或节点卡上的「看题」（旧版本叫「回答」）
+const btn = page.getByRole("button", { name: /看题|回答/ }).first();
 const has = await btn.count();
-console.log("页面上「回答」按钮数量:", has);
+console.log("页面上「看题」按钮数量:", has);
 if (has) {
   await btn.click();
   await page.waitForTimeout(900);

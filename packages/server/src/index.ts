@@ -965,7 +965,7 @@ export function createServer(options: ServerOptions): http.Server {
    * 超时返回 null 让本地框正常弹。上限 20s——再长会触发 CLI 的 hook 超时判拦截。
    */
   async function waitAnswer(name: string, id: string | undefined, waitMs: number): Promise<AnswerEnvelope | null> {
-    // 上限 3 分钟：hook 那边只等几秒，但 mac_ask_console 需要人慢慢来
+    // 上限 3 分钟：hook 侧通常只等几秒，留足余量给需要人慢慢来的调用方
     const deadline = Date.now() + Math.max(0, Math.min(waitMs, 180000));
     for (;;) {
       const q = questionStore.get(name);
@@ -2039,33 +2039,6 @@ const mcpDeps: McpFacadeDeps = {
   orderCancel: (id, by) => cancelOrder(id, by),
   orderRedispatch: (id, assignee, by, coordination) => redispatchOrder(id, assignee, by, coordination),
   getGuide: () => installMd(),
-  // mac_ask_console：题卡推控制台并长等答复。
-  // 这是「只点一次」的唯一可行路径 —— AskUserQuestion 的 hook 在用户点完之后才触发，
-  // 已弹出的卡片没有任何外部通道能关掉，只能从一开始就不弹。
-  askConsole: async (name, questions, title, waitMs) => {
-    const qs: AskQuestion[] = (Array.isArray(questions) ? questions : [])
-      .slice(0, 8)
-      .map((raw: any) => ({
-        question: String(raw?.question ?? "").trim(),
-        header: raw?.header ? String(raw.header).slice(0, 40) : undefined,
-        multiSelect: !!raw?.multiSelect,
-        options: (Array.isArray(raw?.options) ? raw.options : [])
-          .slice(0, 8)
-          .map((o: any) => ({ label: String(o?.label ?? "").trim(), description: o?.description ? String(o.description).slice(0, 200) : undefined }))
-          .filter((o: AskOption) => o.label)
-      }))
-      .filter(q => q.question);
-    const q: NodeQuestion = {
-      id: randomUUID(), at: Date.now(), kind: "mcp-ask",
-      title: title ? String(title).slice(0, 300) : undefined,
-      sessionId: "mcp", questions: qs
-    };
-    setQuestion(name, q);
-    const ans = await waitAnswer(name, q.id, waitMs);
-    return ans
-      ? { answered: true, id: q.id, text: ans.text, by: ans.by }
-      : { answered: false, id: q.id };
-  },
   log
 };
 function mcpRoute(body: string, req: http.IncomingMessage, res: http.ServerResponse, sourceIp: string): Promise<void> {

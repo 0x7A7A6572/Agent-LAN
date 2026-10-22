@@ -135,7 +135,7 @@ async function send() {
         <TriangleAlert class="mt-0.5 h-4 w-4 shrink-0" />
         <span class="line-clamp-2">等待人工：{{ waiting }}</span>
       </p>
-      <!-- 结构化提问只给入口：卡片太窄，题卡放不下，实答在弹层里（ConsoleHome 统一托管） -->
+      <!-- 只读入口：控制台不做答，点开只是看清「在等什么」，决策回节点做 -->
       <Button
         v-if="presence.question && !presence.question.answer"
         size="xs"
@@ -144,11 +144,11 @@ async function send() {
         @click.stop="emit('answer', presence.card.name)"
       >
         <MessageCircleQuestion class="size-3.5" />
-        回答{{ presence.question.questions.length > 1 ? `（${presence.question.questions.length} 问）` : '' }}
+        看题{{ presence.question.questions.length > 1 ? `（${presence.question.questions.length} 问）` : '' }}
       </Button>
       <p v-else-if="presence.question?.answer" class="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
         <Check class="h-3.5 w-3.5 text-emerald-500" />
-        已答复 {{ new Date(presence.question.answer.at).toLocaleTimeString('zh-CN', { hour12: false }) }} · 等节点取走
+        已答复 {{ new Date(presence.question.answer.at).toLocaleTimeString('zh-CN', { hour12: false }) }}
       </p>
       <p class="flex items-center gap-1 line-clamp-1 text-sm text-muted-foreground">
         <TrendingUp v-if="working" class="h-4 w-4 text-blue-500" />

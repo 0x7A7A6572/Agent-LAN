@@ -38,7 +38,7 @@ const LIVE_MS = 120_000;
  * ask（PreToolUse）在用户点完卡片之后才触发，此时再「等控制台答复」没有意义：
  * 人要么在点击前已经在控制台答过（那就直接 deny 回填），要么就是在卡片里答的。
  * 所以默认不等，只查一次「控制台有没有替我答过」。
- * 需要真抢占的调用方（MCP 的 mac_ask_console）自己传更长的等待。
+ * 需要更长的等待窗口时，由调用方自己传 waitMs（gate 等审批场景）。
  * 取值优先级：env MAC_ASK_WAIT_MS > node.json 的 askWaitMs > 0。
  */
 const DEFAULT_WAIT_MS = 0;

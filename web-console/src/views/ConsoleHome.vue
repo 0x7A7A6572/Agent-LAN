@@ -223,7 +223,7 @@ function openRedispatch(order: Order) {
             v-if="askedNodes.length"
             class="shrink-0 rounded bg-amber-500/20 px-1.5 text-[11px] text-amber-600 dark:text-amber-400"
           >
-            {{ askedNodes.length }} 个待选答
+            {{ askedNodes.length }} 个已上报题卡
           </span>
           <ul class="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-amber-700/90 dark:text-amber-300/80">
             <li v-for="w in store.waitingAlert" :key="w.name" class="flex min-w-0 items-center gap-1.5">
@@ -235,7 +235,7 @@ function openRedispatch(order: Order) {
                 class="shrink-0 rounded border border-amber-500/50 px-1.5 text-[11px] leading-4 text-amber-600 hover:bg-amber-500/15 dark:text-amber-400"
                 @click="openAsk(w.name)"
               >
-                回答
+                看题
               </button>
             </li>
           </ul>
@@ -370,7 +370,7 @@ function openRedispatch(order: Order) {
     <FilesDialog v-model:open="filesOpen" />
     <RolePickDialog v-model:open="pickOpen" :roles="store.roles" :node-name="pickName" :current="pickCurrent" @pick="onPickConfirm" />
 
-    <!-- 待人工确认：题卡弹层。节点卡只有 300px，题干和选项都会被截断，故统一在这里作答 -->
+    <!-- 待人工确认：只读题卡。控制台只负责让人看清「节点在等什么」，不作答 -->
     <Dialog :open="!!askName" @update:open="v => { if (!v) askName = null }">
       <DialogContent class="gap-3 sm:max-w-md">
         <DialogHeader>
@@ -379,7 +379,7 @@ function openRedispatch(order: Order) {
             {{ askPresence?.card.name }} 在等你确认
           </DialogTitle>
           <DialogDescription>
-            选项与说明由 agent 提问时一并上报；你提交后，节点那次提问会当场拿到答复（它正挂在这条提问上等着）
+            问题与选项由 agent 上报，这里只做提示。请回该节点的会话里作答。
           </DialogDescription>
         </DialogHeader>
         <QuestionPrompt
@@ -387,8 +387,6 @@ function openRedispatch(order: Order) {
           :key="askPresence.question.id"
           :question="askPresence.question"
           :node-name="askPresence.card.name"
-          @log="log"
-          @answered="askName = null"
         />
       </DialogContent>
     </Dialog>

@@ -48,16 +48,6 @@ export interface McpFacadeDeps {
   orderRedispatch: (id: string, assignee: string | undefined, by: string, coordination?: string) => { ok: boolean; taskId?: string; error?: string };
   /** 节点规范全文（agent-onboarding 同源） */
   getGuide: () => string;
-  /**
-   * 把提问送到控制台并等答复（mac_ask_console 的实现）。
-   * 与 AskUserQuestion 的区别：不弹本地卡片，人在控制台点完这里直接拿到结果。
-   */
-  askConsole: (
-    name: string,
-    questions: { question: string; header?: string; multiSelect?: boolean; options?: { label: string; description?: string }[] }[],
-    title: string,
-    waitMs: number
-  ) => Promise<{ answered: boolean; id: string; text?: string; by?: string }>;
   log: (line: string, level?: "info" | "debug") => void;
 }
 
@@ -164,47 +154,6 @@ const TOOLS = [
         from: { type: "string", description: "你的名字或身份" }
       },
       required: ["to", "text"]
-    }
-  },
-  {
-    name: "mac_ask_console",
-    description:
-      "需要人做决定时，优先用这个而不是内置的 AskUserQuestion：题卡直接送到控制台，人答完这里就拿到结果返回，" +
-      "不会在会话里弹出需要你再点一下的卡片。控制台默认 2 分钟内会有人处理（可调 waitMs）。" +
-      "返回 answered=false 表示没人应答，此时再退回 AskUserQuestion 问本地用户。" +
-      "注意：AskUserQuestion 的 hook 在用户点完之后才触发，靠它做代答是行不通的，所以需要人来定夺时先调本工具",
-    inputSchema: {
-      type: "object",
-      properties: {
-        name: { type: "string", description: "你的节点名，必须与 mac_check_in 一致" },
-        title: { type: "string", description: "题卡标题（显示在控制台顶部），一般写清是哪个会话在问什么" },
-        waitMs: { type: "number", description: "等多久（毫秒），默认 120000，上限 600000" },
-        questions: {
-          type: "array",
-          description: "要问的问题，最多 8 个；每个最多 8 个选项",
-          items: {
-            type: "object",
-            properties: {
-              question: { type: "string", description: "问题正文" },
-              header: { type: "string", description: "短标题，最多 12 字" },
-              multiSelect: { type: "boolean", description: "是否多选" },
-              options: {
-                type: "array",
-                items: {
-                  type: "object",
-                  properties: {
-                    label: { type: "string", description: "选项文字" },
-                    description: { type: "string", description: "选项说明" }
-                  },
-                  required: ["label"]
-                }
-              }
-            },
-            required: ["question"]
-          }
-        }
-      },
-      required: ["name", "questions"]
     }
   },
   {
@@ -595,29 +544,6 @@ export async function mcpHandle(raw: string, req: http.IncomingMessage, res: htt
           case "mac_send_message": {
             const ok = deps.sendMail(String(a.to), String(a.text), String(a.from ?? "anonymous"));
             reply(toolResult({ ok }));
-            return;
-          }
-          case "mac_ask_console": {
-            // 需要人定夺时走这里：题卡推到控制台，等答复直接返回，不弹本地卡片。
-            // 必须已注册：否则控制台不知道该把题卡挂到哪个节点名下
-            const who = String(a.name ?? "");
-            if (!who || !deps.touch(who, true)) {
-              replyError(-32001, "未知节点: " + (who || "缺少 name") + "，请先 mac_check_in 注册");
-              return;
-            }
-            const qs = Array.isArray(a.questions) ? a.questions : [];
-            if (!qs.length) { replyError(-32602, "questions 不能为空"); return; }
-            const waitMs = Math.max(5000, Math.min(Number(a.waitMs) || 120000, 600000));
-            deps.log("[ask] " + who + " 向控制台提问（等 " + Math.round(waitMs / 1000) + "s）");
-            const r = await deps.askConsole(who, qs as never, String(a.title ?? ""), waitMs);
-            if (!r.answered) {
-              reply(toolResult({
-                ok: true, answered: false, id: r.id,
-                hint: "控制台在等待时间内无人应答。可以再等一次，或退回 AskUserQuestion 问本地用户"
-              }));
-              return;
-            }
-            reply(toolResult({ ok: true, answered: true, id: r.id, by: r.by, answer: r.text }));
             return;
           }
           case "mac_upload_file": {

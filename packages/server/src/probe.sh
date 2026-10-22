@@ -171,13 +171,9 @@ EOF
   这一轮真正收工（给出最终答复）时显式报 state="idle"。
   **不要每轮 working/idle 来回切**——用户连续追问时那样会刷屏抖动，
   连续干同一件事就保持 working。
-- 需要人工确认：**优先调 MCP 工具 mac_ask_console**（题卡直接进控制台，人点完你当场拿到答复，
-  全程不弹本地卡片）。例：mac_ask_console(name="__NAME__", title="<哪个会话在问什么>",
-  questions=[{question, options:[{label}]}])。返回 answered=false 说明等待时间内没人应答，
-  这时才退回 AskUserQuestion 问本地用户。
-  为什么不能靠 AskUserQuestion + hook 代答：CLI 的 PreToolUse 要等用户点完卡片才触发
-  （实测相差 2 分 31 秒），卡片弹出后也没有任何外部通道能关掉它——想让人只点一次，就别弹卡片。
-  hook 仍然值得装：装了之后 Agent 侧任何地方弹的 AskUserQuestion 都会同步到控制台，人能看见。
+- 需要人工确认：直接用 AskUserQuestion 提问即可。装了提问 hook 时，问题与选项会同步到
+  控制台的节点卡（「看题」入口），人一眼能看出你在等什么。
+  注意控制台**只做提示、不代答**：决策请在节点侧完成，别指望人在控制台点一下就把你放行。
   纯文本上报可用 mac_report(state="input-required", text=等谁确认什么)。
 - 规范全文：curl -s http://__SERVER__/mcp/install.md ，或调工具 mac_get_guide。
 - 上报必须带 name="__NAME__"，否则状态不写回工单，等于白干。
@@ -216,11 +212,9 @@ HINTEOF
     echo "[!] hub 未提供 /bell.sh，本次没装门铃；升级 hub 后重跑 --install 即可补上"
   fi
   if [ "${HAS_HOOK:-0}" = "1" ]; then
-    echo "提问：需要人拍板请调 mac_ask_console（控制台点一次就返回，不弹卡片）"
-    echo "      hook 已装（Agent 侧 AskUserQuestion 会同步到控制台）；重启会话后生效"
+    echo "提问提示：已装 hook（AskUserQuestion 会同步到控制台「看题」入口，只提示不作答）；重启会话后生效"
   else
-    echo "提问：需要人拍板请调 mac_ask_console；未装 hook（缺 node 或 hub 无 /hook-ask.mjs），"
-    echo "      只影响「Agent 侧弹的卡片同步到控制台」，不影响接活与上报"
+    echo "[!] 未装提问 hook（缺 node 或 hub 无 /hook-ask.mjs），控制台看不到你在等什么；不影响接活与上报"
   fi
   echo "临时换名调试：NAME=xxx bash $INSTALL_DIR/worker.sh"
   exit 0
