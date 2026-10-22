@@ -26,6 +26,11 @@ const MARKER = "hook-ask.mjs";
 const TIMEOUT_MS = 3000;
 /** 节点存活窗口：worker 心跳 10s，留 120s 余量；超过就当没有活着的节点 */
 const LIVE_MS = 120_000;
+/**
+ * 抢占式等代答：提问前挂在这里等这么久，控制台答了就直接把答案交给模型。
+ * 0 = 关掉抢占（只上报、不等待）。上限 10s——再长会顶到 CLI 的 hook 超时判拦截。
+ */
+const ASK_WAIT_MS = Math.max(0, Math.min(Number(process.env.MAC_ASK_WAIT_MS ?? 5000) || 0, 10_000));
 
 const ROOT = path.join(os.homedir(), ".mac-worker");
 
@@ -123,6 +128,35 @@ async function post(server, payload) {
   }
 }
 
+/** 长等代答：hub 那边挂起直到有人答或超时 */
+async function waitAnswer(server, name, id, waitMs) {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), waitMs + 4000);
+  try {
+    const qs = new URLSearchParams({ name, waitMs: String(waitMs) });
+    if (id) qs.set("id", id);
+    const res = await fetch("http://" + server + "/worker/ask/answer?" + qs.toString(), { signal: ctl.signal });
+    const data = await res.json();
+    return Array.isArray(data?.answers) ? data.answers : [];
+  } catch { return []; } finally { clearTimeout(timer); }
+}
+
+/**
+ * 抢占式放行：deny + reason 是唯一能把「答案」塞回模型的钩子出口。
+ * AskUserQuestion 被 deny 后模型会拿到 reason 继续往下走，本地框不再弹出。
+ */
+function denyWithAnswer(answer) {
+  const reason = String(answer?.text ?? "").trim() ||
+    "【控制台答复】用户已在 Agent-LAN 控制台作答，请按答复继续。";
+  process.stdout.write(JSON.stringify({
+    hookSpecificOutput: {
+      hookEventName: "PreToolUse",
+      permissionDecision: "deny",
+      permissionDecisionReason: reason + "\n（这是人在控制台代答的结果，不要再重复调用 AskUserQuestion 问同一件事）"
+    }
+  }));
+}
+
 /** 摘要：把 AskUserQuestion 的 questions 压成一行标题，控制台 banner 直接显示 */
 function titleOf(input, node) {
   const cwd = path.basename(String(input?.cwd ?? process.cwd())) || "会话";
@@ -152,13 +186,25 @@ async function runAsk() {
   };
   if (!payload.questions.length && !payload.title) { logLine("没有问题内容，忽略"); return; }
   const r = await post(node.server, payload);
-  logLine(`${node.name} <- ${payload.questions.length} 问 -> ${r.status} ${r.ok ? "ok" : r.text.slice(0, 120)}`);
-  if (r.ok) {
-    try {
-      const id = JSON.parse(r.text)?.id;
-      if (id) fs.writeFileSync(idFile(node, hook.session_id), id);
-    } catch { /* id 落盘失败只影响 done 的精确清除 */ }
-  }
+  if (!r.ok) { logLine(`${node.name} 上报失败 ${r.status}：${r.text.slice(0, 120)}（不等待，走本地框）`); return; }
+  let res = {};
+  try { res = JSON.parse(r.text); } catch { /* 老 hub 只回 ok */ }
+  logLine(`${node.name} <- ${payload.questions.length} 问 -> ${r.status} ok${res.answered ? " (已答)" : ""}`);
+  // 这一问之前已经被答过（模型重试同一提问）：直接把答案还回去，断掉重复问
+  if (res.answered && res.answer) { denyWithAnswer(res.answer); return; }
+  try {
+    const id = res?.id;
+    if (id) fs.writeFileSync(idFile(node, hook.session_id), id);
+    if (!ASK_WAIT_MS) return;
+    // 抢占式：等控制台代答；等到就 deny 放行，等不到就静默退出让本地框正常弹
+    const answers = await waitAnswer(node.server, node.name, id, ASK_WAIT_MS);
+    if (answers.length) {
+      logLine(`${node.name} 抢占成功，代答放行（${ASK_WAIT_MS}ms 窗口）`);
+      denyWithAnswer(answers[0]);
+    } else {
+      logLine(`${node.name} ${ASK_WAIT_MS}ms 内无人代答，交给本地框`);
+    }
+  } catch { /* id 落盘失败只影响 done 的精确清除 */ }
 }
 
 async function runDone() {
@@ -186,7 +232,7 @@ function configDir() {
 
 function hookEntry(scriptPath, mode) {
   const cmd = 'node "' + scriptPath.replace(/\\/g, "/") + '" ' + mode;
-  return { matcher: "^AskUserQuestion$", hooks: [{ type: "command", command: cmd, timeout: 10 }] };
+  return { matcher: "^AskUserQuestion$", hooks: [{ type: "command", command: cmd, timeout: 20 }] };
 }
 
 function mergeHooks(settings, scriptPath) {

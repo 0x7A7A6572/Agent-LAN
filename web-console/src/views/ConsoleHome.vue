@@ -359,7 +359,7 @@ function openRedispatch(order: Order) {
             {{ askPresence?.card.name }} 在等你确认
           </DialogTitle>
           <DialogDescription>
-            选项与说明由 agent 提问时一并上报；提交后作为一条留言投回节点，它下次领任务时收到
+            选项与说明由 agent 提问时一并上报；你提交后，节点那次提问会当场拿到答复（它正挂在这条提问上等着）
           </DialogDescription>
         </DialogHeader>
         <QuestionPrompt

@@ -174,9 +174,9 @@
         </div>
         <div class="notes">
           <div><b>提交 →</b> <span>POST /console/questions/answer</span></div>
-          <div><b>hub 落成留言 →</b> <span>节点下次领活时随任务带回：「【控制台答复】1. 发布到哪套环境？ → 预发」</span></div>
-          <div><b>hook 收到 PostToolUse →</b> <span>POST /worker/ask {"{clear:true}"}，弹层与 badge 一起消失</span></div>
-          <div><b>没人答 →</b> <span>卡片保持「等人工」、banner 一直挂着；不推进工单状态，也不占任务队列</span></div>
+          <div><b>写回这次提问 →</b> <span>节点正挂在 <code>GET /worker/ask/answer?waitMs=</code> 上，当场拿到：「1. 发布到哪套环境？ → 预发」</span></div>
+          <div><b>抢占成功 →</b> <span>hook 输出 <code>permissionDecision:"deny"</code> + 答复正文，模型当场继续，本地提问框不弹</span></div>
+          <div><b>5s 内没人答 →</b> <span>hook 静默退出，本地提问框照常弹；控制台题卡继续挂着等人</span></div>
         </div>
       </div>
     </div>

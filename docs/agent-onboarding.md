@@ -274,7 +274,9 @@ node hook-ask.mjs print            # 只想手工粘贴 hooks 片段时用
 
 - `PreToolUse(^AskUserQuestion$)` → `POST /worker/ask`，控制台置「等人工 + 题卡」
 - `PostToolUse(^AskUserQuestion$)` → `POST /worker/ask {clear:true}`，题卡自动消失
-- 答复以留言形式随下次 `mac_pull_task` 回来，格式：`【控制台答复】1. 题干 → 选项`
+- **抢占式代答**：hook 上报后会在 `PreToolUse` 挂 `GET /worker/ask/answer?waitMs=` 等 `MAC_ASK_WAIT_MS`（默认 5000ms，0 = 关闭）。有人在这窗口里答了 → hook 直接输出 `permissionDecision: "deny"` + 答复正文，模型当场拿到答案继续，本地提问框不弹；没人答 → hook 静默退出，本地框照常弹
+- 答复不是留言：写在这次提问上（`q.answer`），随 `mac_pull_task` 的 `answers[]` 结构化下发（`{questionId, text, choice}`），取走即回收题卡
+- 程序代答：`POST /worker/ask/answer {name, id?, choice|text, by}` —— PM / 其它节点 / 脚本都能替人答，与控制台同一套写入语义
 
 约束（脚本已内置，改代码别破坏）：
 

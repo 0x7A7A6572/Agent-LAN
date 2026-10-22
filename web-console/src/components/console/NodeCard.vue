@@ -148,7 +148,7 @@ async function send() {
       </Button>
       <p v-else-if="presence.question?.answer" class="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
         <Check class="h-3.5 w-3.5 text-emerald-500" />
-        已答复 {{ new Date(presence.question.answer.at).toLocaleTimeString('zh-CN', { hour12: false }) }} · 待节点确认
+        已答复 {{ new Date(presence.question.answer.at).toLocaleTimeString('zh-CN', { hour12: false }) }} · 等节点取走
       </p>
       <p class="flex items-center gap-1 line-clamp-1 text-sm text-muted-foreground">
         <TrendingUp v-if="working" class="h-4 w-4 text-blue-500" />

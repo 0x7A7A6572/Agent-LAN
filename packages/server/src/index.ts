@@ -40,9 +40,20 @@ export interface AskQuestion {
 export interface QuestionAnswer {
   at: number;
   by: string;
-  /** 回给节点的那段文本，与留言同体 */
+  /** 给 node 侧的整段文本；结构化选择在 choice 里，两者都发 */
   text: string;
   /** 逐题选择：key 是题序号（字符串），value 是选中的 label 列表 */
+  choice?: Record<string, string[]>;
+  /** 节点是否已经取走：取走后题卡即回收，避免同一条答复被反复消费 */
+  pickedUp?: boolean;
+}
+/** 节点领活时下发的答复：与「留言」分开，按 questionId 对齐，不是插话 */
+export interface AnswerEnvelope {
+  questionId: string;
+  title?: string;
+  at: number;
+  by: string;
+  text: string;
   choice?: Record<string, string[]>;
 }
 export interface NodeQuestion {
@@ -903,6 +914,74 @@ export function createServer(options: ServerOptions): http.Server {
     log("[ask] " + name + " 待人工确认已清除" + (reason ? "（" + reason + "）" : ""));
   }
 
+  /**
+   * 取走该节点待领的答复：只取一次，取走即回收题卡。
+   * 答复是对某次提问的回应，不是插话，所以不进留言信箱——按 questionId 对齐下发。
+   */
+  function takeAnswers(name: string): AnswerEnvelope[] {
+    const out: AnswerEnvelope[] = [];
+    for (const [node, q] of questionStore) {
+      if (node !== name || !q.answer || q.answer.pickedUp) continue;
+      out.push({
+        questionId: q.id, title: q.title, at: q.answer.at,
+        by: q.answer.by, text: q.answer.text, choice: q.answer.choice
+      });
+      q.answer.pickedUp = true;
+    }
+    if (out.length) clearQuestion(name, "答复已被节点取走");
+    return out;
+  }
+
+  /** 控制台、PM、任何程序代答共用一套文案与写入语义 */
+  function applyAnswer(
+    name: string, q: NodeQuestion,
+    input: { choice?: Record<string, string[]>; other?: string; text?: string; by?: string }
+  ): QuestionAnswer {
+    const choice = (input.choice && typeof input.choice === "object" ? input.choice : {}) as Record<string, string[]>;
+    const other = String(input.other ?? "").trim();
+    const lines = q.questions.map((item, i) => {
+      const picked = Array.isArray(choice[String(i)]) ? choice[String(i)].map(String) : [];
+      const parts = [picked.join("、"), i === 0 ? other : ""].filter(Boolean);
+      return i + 1 + ". " + item.question + " → " + (parts.join("；") || "（未选）");
+    });
+    if (!q.questions.length) lines.push("→ " + (other || "（无补充）"));
+    const by = String(input.by ?? "human-console");
+    q.answer = {
+      at: Date.now(), by, choice, pickedUp: false,
+      text: input.text?.trim() ||
+        ("【控制台答复】" + (q.title ? " 关于「" + q.title + "」" : "") + "\n" +
+          lines.join("\n") + "\n请据此继续，不要再重复提问。")
+    };
+    questionStore.set(name, q);
+    registry.setWaiting(name, undefined);
+    pushPresence();
+    log("[ask] " + by + " 答复 " + name + "：" + lines.join(" / ").slice(0, 200));
+    return q.answer;
+  }
+
+  /**
+   * 长等答复：抢占式的核心。
+   * hook 在 PreToolUse 里挂在这里等 waitMs，有人答了就拿走（markPickedUp），
+   * 超时返回 null 让本地框正常弹。上限 20s——再长会触发 CLI 的 hook 超时判拦截。
+   */
+  async function waitAnswer(name: string, id: string | undefined, waitMs: number): Promise<AnswerEnvelope | null> {
+    const deadline = Date.now() + Math.max(0, Math.min(waitMs, 20000));
+    for (;;) {
+      const q = questionStore.get(name);
+      if (q?.answer && !q.answer.pickedUp && (!id || q.id === id)) {
+        const env: AnswerEnvelope = {
+          questionId: q.id, title: q.title, at: q.answer.at,
+          by: q.answer.by, text: q.answer.text, choice: q.answer.choice
+        };
+        q.answer.pickedUp = true;
+        clearQuestion(name, "答复已被节点取走（抢占式代答）");
+        return env;
+      }
+      if (Date.now() >= deadline) return null;
+      await new Promise(r => setTimeout(r, 250));
+    }
+  }
+
   // 名册快照附带 hub 侧角色与排队任务数：控制台据此展示与选人。
   // queuedItems：排队任务摘要列表，3D 拓扑的任务牌逐条显示用
   const withRoles = (list: AgentPresence[]) =>
@@ -958,6 +1037,24 @@ export function createServer(options: ServerOptions): http.Server {
     }
   }, 60000);
   receiptTimer.unref?.();
+
+  // 题卡兜底回收：正常路径由 hook 的 PostToolUse 清（人和节点两侧都适用），
+  // 但人可能在会话里直接回答而不经控制台、也可能控制台答完 agent 再也不回来，
+  // 这两种情况下题卡会永久挂着，所以再兜两层时间：
+  //   已答复 10 分钟 → 收起（答复早已送达，留着只会让人以为还没处理完）
+  //   没人答 2 小时   → 收起（节点半路死掉时 banner 不该永远亮着）
+  const ANSWERED_ASK_TTL_MS = 10 * 60 * 1000;
+  const OPEN_ASK_TTL_MS = 120 * 60 * 1000;
+  const askTimer = setInterval(() => {
+    const now = Date.now();
+    for (const [name, q] of questionStore) {
+      const since = q.answer?.at ?? q.at;
+      if (now - since > (q.answer ? ANSWERED_ASK_TTL_MS : OPEN_ASK_TTL_MS)) {
+        clearQuestion(name, q.answer ? "答复超时未确认，自动收起" : "提问超时未答，自动收起");
+      }
+    }
+  }, 60000);
+  askTimer.unref?.();
 
   // 孤儿工单回收：owner/assignee 节点已删或长期离线，工单会永远无人接管。
   // 退回创建者（human-console）并在 timeline 留痕，避免单子静默滞留。
@@ -1698,6 +1795,11 @@ export function createServer(options: ServerOptions): http.Server {
       if (prev && Date.now() - prev.at < 5000 && (prev.questions[0]?.question ?? "") === (questions[0]?.question ?? "")) {
         return json(200, { ok: true, id: prev.id, deduped: true });
       }
+      // 同一问在 10 分钟内被答过又重问：直接把答案还回去，不再建新题
+      // （抢占式 deny 之后模型有时会重试同一个提问，靠这条断掉死循环）
+      if (prev?.answer && Date.now() - prev.answer.at < 600000 && (prev.questions[0]?.question ?? "") === (questions[0]?.question ?? "")) {
+        return json(200, { ok: true, id: prev.id, answered: true, answer: prev.answer });
+      }
       const q: NodeQuestion = {
         id: randomUUID(), at: Date.now(), kind: String(b.kind ?? "ask"), title,
         taskId: b.taskId ? String(b.taskId) : undefined,
@@ -1713,6 +1815,48 @@ export function createServer(options: ServerOptions): http.Server {
       res.end(JSON.stringify({ questions: [...questionStore.entries()].map(([name, q]) => ({ name, ...q })) }));
       return;
     }
+    // 节点取答复：带 waitMs 就是长等（抢占式：hook 在 PreToolUse 里挂这里等代答）
+    if (req.method === "GET" && url.pathname === "/worker/ask/answer") {
+      const name = String(url.searchParams.get("name") ?? "").trim();
+      if (!name) {
+        res.writeHead(400, { "content-type": "application/json", connection: "close" });
+        res.end(JSON.stringify({ ok: false, error: "缺少 name" }));
+        return;
+      }
+      const id = url.searchParams.get("id") ?? undefined;
+      const waitMs = Number(url.searchParams.get("waitMs") ?? 0) || 0;
+      const answers: AnswerEnvelope[] = [];
+      if (waitMs > 0) {
+        const one = await waitAnswer(name, id, waitMs);
+        if (one) answers.push(one);
+      } else {
+        answers.push(...takeAnswers(name));
+      }
+      res.writeHead(200, { "content-type": "application/json", connection: "close" });
+      res.end(JSON.stringify({ ok: true, answers }));
+      return;
+    }
+    // 程序代答：PM / 其它节点 / 脚本都能替人答，与控制台同一套写入语义
+    if (req.method === "POST" && url.pathname === "/worker/ask/answer") {
+      const json = (code: number, obj: unknown) => {
+        res.writeHead(code, { "content-type": "application/json", connection: "close" });
+        res.end(JSON.stringify(obj));
+      };
+      let body = "";
+      for await (const chunk of req) body += chunk;
+      let b: Record<string, any> = {};
+      try { b = JSON.parse(body || "{}"); } catch { return json(400, { ok: false, error: "body 不是合法 JSON" }); }
+      const name = String(b.name ?? "").trim();
+      const q = questionStore.get(name);
+      if (!q) return json(404, { ok: false, error: "该节点没有待回答的提问: " + (name || "(空)") });
+      if (b.id && String(b.id) !== q.id) return json(409, { ok: false, error: "提问已更新，id 不匹配" });
+      if (q.answer) return json(409, { ok: false, error: "这条提问已经答复过了", question: q });
+      const answer = applyAnswer(name, q, {
+        choice: b.choice, other: b.other, text: b.text,
+        by: String(b.by ?? "program")
+      });
+      return json(200, { ok: true, id: q.id, answer });
+    }
     // 控制台答复：落成一条留言（与 mac_send_message 同一条通路）+ 回写题卡
     if (req.method === "POST" && url.pathname === "/console/questions/answer") {
       const json = (code: number, obj: unknown) => {
@@ -1727,24 +1871,7 @@ export function createServer(options: ServerOptions): http.Server {
       const q = questionStore.get(name);
       if (!q) return json(404, { ok: false, error: "该节点没有待回答的提问: " + (name || "(空)") });
       if (q.answer) return json(409, { ok: false, error: "这条提问已经答复过了", question: q });
-      const choice = (b.choice && typeof b.choice === "object" ? b.choice : {}) as Record<string, string[]>;
-      const other = String(b.other ?? "").trim();
-      const lines = q.questions.map((item, i) => {
-        const picked = Array.isArray(choice[String(i)]) ? choice[String(i)].map(String) : [];
-        const parts = [picked.join("、"), i === 0 ? other : ""].filter(Boolean);
-        return i + 1 + ". " + item.question + " → " + (parts.join("；") || "（未选）");
-      });
-      if (!q.questions.length) lines.push("→ " + (other || "（无补充）"));
-      const text = "【控制台答复】" + (q.title ? " 关于「" + q.title + "」" : "") + "\n" +
-        lines.join("\n") + "\n请据此继续，不要再重复提问。";
-      // 与 mac_send_message 同一条信箱通路：节点下次领活时随任务带回
-      if (!mailboxes.has(name)) mailboxes.set(name, []);
-      mailboxes.get(name)!.push({ text, from: String(b.by ?? "human-console"), at: new Date().toISOString() });
-      q.answer = { at: Date.now(), by: String(b.by ?? "human-console"), text, choice };
-      questionStore.set(name, q);
-      registry.setWaiting(name, undefined);
-      pushPresence();
-      log("[ask] 控制台答复 " + name + "：" + lines.join(" / ").slice(0, 200));
+      applyAnswer(name, q, { choice: b.choice, other: b.other, by: String(b.by ?? "human-console") });
       // 任务因等人被打到 input-required：答复即视为放行，拉回 working（工单同步解除 blocked）
       if (q.taskId) {
         const t = tasks.get(q.taskId);
@@ -1840,7 +1967,10 @@ const mcpDeps: McpFacadeDeps = {
   pullTask: async (name, ms) => {
     const task = await pullTask(name, ms);
     const mail = dropMail(name);
-    if (mail.length) pushPresence();
+    // 答复按 questionId 随领活带回去（不是留言）；取走即回收题卡，
+    // 所以「人只在控制台答、agent 卡在原地」的情况下控制台也不会永远挂「已答复」
+    const answers = takeAnswers(name);
+    if (mail.length || answers.length) pushPresence();
     // 本节点执行中任务：state=working 且投给本节点的（排除自己刚领的）
     const cur = [...tasks.values()].find(x =>
       x.state === "working" && x.deliveredTo === name &&
@@ -1850,7 +1980,7 @@ const mcpDeps: McpFacadeDeps = {
     const pending = (pullQueues.get(name) ?? [])
       .filter(t => !isTerminal(t.state))
       .map(t => ({ id: t.id, prompt: t.prompt.slice(0, 200), createdAt: t.createdAt }));
-    return { task, messages: mail, pending, working };
+    return { task, messages: mail, answers, pending, working };
   },
   onDeliveryFailed: (taskId, name) => redeliverTask(taskId, name),
   onDelivered: taskId => confirmDelivered(taskId),
