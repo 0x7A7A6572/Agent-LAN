@@ -6,7 +6,8 @@ import type { Order, OrderAttachment, OrderStatus, PmState, Presence, RoleDef } 
 export const useConsoleStore = defineStore('console', () => {
   // 名册：SSE 全量推送，直接整表替换
   const presences = ref<Presence[]>([])
-  const sseStatus = ref<'connecting' | 'live' | 'error'>('connecting')
+  // polling = SSE 长时间没消息，已降级成轮询（代理/中间设备掐长连接的常见情况）
+  const sseStatus = ref<'connecting' | 'live' | 'polling' | 'error'>('connecting')
 
   // 等待人工确认：名册里任一节点带 waitingFor 即弹提示（已提醒过的节点不重复弹）
   const waitingNodes = computed(() => presences.value.filter(p => p.waitingFor))
@@ -52,20 +53,48 @@ export const useConsoleStore = defineStore('console', () => {
     }
     es.onerror = () => {
       sseStatus.value = 'error'
+      startFallbackPoll()
     }
     es.onmessage = e => {
       try {
-        presences.value = JSON.parse(e.data).presences ?? []
+        lastSseAt = Date.now()
+        applyPresences(JSON.parse(e.data).presences ?? [])
         sseStatus.value = 'live'
-        // 只对「新进入等待」的节点弹一次，签名不变不重复打扰
-        const pending = presences.value.filter(p => p.waitingFor)
-        const sig = pending.map(p => p.card.name + '|' + p.waitingFor).sort().join(';')
-        if (sig !== waitingSig.value) {
-          waitingSig.value = sig
-          waitingAlert.value = pending.map(p => ({ name: p.card.name, text: p.waitingFor! }))
-        }
       } catch {}
     }
+    startFallbackPoll()
+  }
+
+  // 收到一份名册就整表替换，并只在「新进入等待」时弹一次，签名不变不重复打扰
+  function applyPresences(list: Presence[]) {
+    presences.value = list
+    const pending = list.filter(p => p.waitingFor)
+    const sig = pending.map(p => p.card.name + '|' + p.waitingFor).sort().join(';')
+    if (sig !== waitingSig.value) {
+      waitingSig.value = sig
+      waitingAlert.value = pending.map(p => ({ name: p.card.name, text: p.waitingFor! }))
+    }
+  }
+
+  /**
+   * SSE 兜底：长连接超过 8s 没有消息就改用 3s 轮询快照。
+   * 不这么兜的话，中间设备悄悄掐断长连接时页面会「冻」在断开那一刻 ——
+   * 节点等人、题卡在服务端一直在，但人完全看不到，只能等下一次偶然的刷新。
+   */
+  let lastSseAt = 0
+  let fallbackTimer: ReturnType<typeof setInterval> | undefined
+  function startFallbackPoll() {
+    if (fallbackTimer) return
+    fallbackTimer = setInterval(async () => {
+      if (Date.now() - lastSseAt < 8000) return
+      try {
+        const d = await api.fetchPresenceSnapshot()
+        if (Array.isArray(d?.presences)) {
+          applyPresences(d.presences)
+          if (sseStatus.value !== 'live') sseStatus.value = 'polling'
+        }
+      } catch {}
+    }, 3000)
   }
 
   async function pollLogs() {

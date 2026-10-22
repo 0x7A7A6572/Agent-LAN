@@ -9,6 +9,10 @@ async function getJson<T>(url: string): Promise<T> {
 export const fetchPresences = () =>
   getJson<{ presences: Presence[] }>('/console/presence/stream').catch(() => ({ presences: [] as Presence[] }))
 
+// SSE 断了才用：一次性名册快照（含 waitingFor / question），给兜底轮询
+export const fetchPresenceSnapshot = () =>
+  getJson<{ presences: Presence[]; at: number }>('/console/presence')
+
 export const fetchLogs = () => getJson<{ logs: string[] }>('/console/logs').catch(() => ({ logs: [] as string[] }))
 
 export const clearLogs = () => fetch('/console/logs/clear', { method: 'POST' })

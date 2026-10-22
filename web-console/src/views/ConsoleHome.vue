@@ -186,6 +186,26 @@ function openRedispatch(order: Order) {
       </div>
       <!-- <span class="text-sm font-medium">Documents</span> -->
       <span class="hidden text-xs text-muted-foreground lg:inline">{{ store.summary }}</span>
+      <!-- 实时推送状态：以前断没断只能靠猜，节点在等人、题卡在服务端却看不见 -->
+      <span
+        class="ml-auto flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px]"
+        :class="{
+          'border-emerald-500/40 text-emerald-600': store.sseStatus === 'live',
+          'border-amber-500/50 text-amber-600': store.sseStatus === 'polling' || store.sseStatus === 'connecting',
+          'border-destructive/50 text-destructive': store.sseStatus === 'error',
+        }"
+        :title="store.sseStatus === 'live' ? '实时推送已连接' : store.sseStatus === 'polling' ? '长连接不可用，已降级为 3 秒轮询' : '推送断开'"
+      >
+        <span
+          class="size-1.5 rounded-full"
+          :class="{
+            'bg-emerald-500': store.sseStatus === 'live',
+            'bg-amber-500': store.sseStatus === 'polling' || store.sseStatus === 'connecting',
+            'bg-destructive': store.sseStatus === 'error',
+          }"
+        />
+        {{ store.sseStatus === 'live' ? '实时' : store.sseStatus === 'polling' ? '轮询兜底' : store.sseStatus === 'connecting' ? '连接中' : '推送断开' }}
+      </span>
 
     </header>
 
