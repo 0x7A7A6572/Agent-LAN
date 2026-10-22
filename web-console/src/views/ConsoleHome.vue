@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { ChevronRight, FolderOpen, Network, ScrollText, Plus, SlidersHorizontal, Ticket, TriangleAlert, X } from 'lucide-vue-next'
+import { ChevronRight, FolderOpen, MessageCircleQuestion, Network, ScrollText, Plus, SlidersHorizontal, Ticket, TriangleAlert, X } from 'lucide-vue-next'
 import { useConsoleStore } from '@/stores/console'
 import { setNodeRole, saveRoles } from '@/api/console'
 import CreateOrderDialog from '@/components/console/CreateOrderDialog.vue'
@@ -16,6 +16,14 @@ import RoleLibrary from '@/components/console/RoleLibrary.vue'
 import RolePickDialog from '@/components/console/RolePickDialog.vue'
 import FilesDialog from '@/components/console/FilesDialog.vue'
 import InstallPanel from '@/components/console/InstallPanel.vue'
+import QuestionPrompt from '@/components/console/QuestionPrompt.vue'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { Badge } from '@/components/ui/badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Button } from '@/components/ui/button'
@@ -39,6 +47,15 @@ const activeNode = ref<string | null>(null)
 function onNodeSelect(name: string) {
   activeNode.value = name
   topoRef.value?.focus(name)
+}
+
+// 待选答的节点提问：首页统一托管一个弹层，节点卡与 banner 都只是入口
+// （节点卡只有 300px 宽，题卡塞进去题干和选项都会截断，所以放弹层）
+const askedNodes = computed(() => store.presences.filter(p => p.question && !p.question.answer))
+const askName = ref<string | null>(null)
+const askPresence = computed(() => store.presences.find(p => p.card.name === askName.value))
+function openAsk(name: string) {
+  askName.value = name
 }
 
 // 悬浮 tab：节点 / 工单 / 日志 / 设置
@@ -173,24 +190,43 @@ function openRedispatch(order: Order) {
     </header>
 
       <main class="flex min-h-0 flex-1 flex-col gap-4 p-4 pb-24 md:gap-6 md:p-6 md:pb-24">
-        <!-- 人工确认提醒：有节点卡在等待人类答复时置顶，可关闭 -->
+        <!-- 人工确认提醒：单行紧凑条，内容多自动折行，不铺满整行 -->
         <div
           v-if="store.waitingAlert.length"
-          class="flex items-start gap-2 rounded-md border border-amber-500/60 bg-amber-500/10 px-3 py-2"
+          class="flex w-fit max-w-full flex-wrap items-center gap-x-3 gap-y-1 rounded-md border border-amber-500/60 bg-amber-500/10 px-2.5 py-1.5 text-xs"
         >
-          <TriangleAlert class="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
-          <div class="flex-1 text-sm">
-            <p class="font-medium text-amber-700">
-              {{ store.waitingAlert.length }} 个节点在等待人工确认
-            </p>
-            <ul class="mt-1 space-y-0.5 text-amber-700/90">
-              <li v-for="w in store.waitingAlert" :key="w.name">
+          <TriangleAlert class="size-3.5 shrink-0 text-amber-500" />
+          <span class="shrink-0 font-medium text-amber-600 dark:text-amber-400">
+            {{ store.waitingAlert.length }} 个节点等人工
+          </span>
+          <span
+            v-if="askedNodes.length"
+            class="shrink-0 rounded bg-amber-500/20 px-1.5 text-[11px] text-amber-600 dark:text-amber-400"
+          >
+            {{ askedNodes.length }} 个待选答
+          </span>
+          <ul class="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-amber-700/90 dark:text-amber-300/80">
+            <li v-for="w in store.waitingAlert" :key="w.name" class="flex min-w-0 items-center gap-1.5">
+              <span class="max-w-[240px] truncate" :title="w.name + '：' + w.text">
                 <span class="font-medium">{{ w.name }}</span>：{{ w.text }}
-              </li>
-            </ul>
-          </div>
-          <Button variant="ghost" size="icon-sm" class="text-amber-700" @click="store.dismissWaitingAlert()">
-            <X class="h-4 w-4" />
+              </span>
+              <button
+                v-if="askedNodes.some(a => a.card.name === w.name)"
+                class="shrink-0 rounded border border-amber-500/50 px-1.5 text-[11px] leading-4 text-amber-600 hover:bg-amber-500/15 dark:text-amber-400"
+                @click="openAsk(w.name)"
+              >
+                回答
+              </button>
+            </li>
+          </ul>
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            class="ml-1 shrink-0 text-amber-600 hover:bg-amber-500/15"
+            title="收起提醒"
+            @click="store.dismissWaitingAlert()"
+          >
+            <X class="size-3.5" />
           </Button>
         </div>
 
@@ -215,6 +251,7 @@ function openRedispatch(order: Order) {
                   @select="onNodeSelect"
                   @pick-role="onPickRole"
                   @delete-node="onDeleteNode"
+                  @answer="openAsk"
                 />
                 <p v-if="!store.presences.length" class="py-6 text-center text-xs text-muted-foreground">
                   暂无节点接入
@@ -312,5 +349,28 @@ function openRedispatch(order: Order) {
     <RedispatchDialog ref="redispatchDialog" v-model:open="redispatchOpen" :presences="store.presences" @confirm="onOrderRedispatch" />
     <FilesDialog v-model:open="filesOpen" />
     <RolePickDialog v-model:open="pickOpen" :roles="store.roles" :node-name="pickName" :current="pickCurrent" @pick="onPickConfirm" />
+
+    <!-- 待人工确认：题卡弹层。节点卡只有 300px，题干和选项都会被截断，故统一在这里作答 -->
+    <Dialog :open="!!askName" @update:open="v => { if (!v) askName = null }">
+      <DialogContent class="gap-3 sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle class="flex items-center gap-2 text-base">
+            <MessageCircleQuestion class="size-4 text-amber-500" />
+            {{ askPresence?.card.name }} 在等你确认
+          </DialogTitle>
+          <DialogDescription>
+            选项与说明由 agent 提问时一并上报；提交后作为一条留言投回节点，它下次领任务时收到
+          </DialogDescription>
+        </DialogHeader>
+        <QuestionPrompt
+          v-if="askPresence?.question"
+          :key="askPresence.question.id"
+          :question="askPresence.question"
+          :node-name="askPresence.card.name"
+          @log="log"
+          @answered="askName = null"
+        />
+      </DialogContent>
+    </Dialog>
   </div>
 </template>

@@ -1,4 +1,4 @@
-import type { FileInfo, Order, OrderAttachment, OrderDetail, PmConfigView, PmDecisionView, PmState, Presence, RoleDef } from '@/types/console'
+import type { FileInfo, NodeQuestion, Order, OrderAttachment, OrderDetail, PmConfigView, PmDecisionView, PmState, Presence, RoleDef } from '@/types/console'
 import { rpc } from './rpc'
 
 async function getJson<T>(url: string): Promise<T> {
@@ -143,5 +143,13 @@ export const deleteNode = (name: string) =>
   )
 
 export const sendMail = (to: string, text: string) => rpc('mailbox/send', { to, text, from: 'human-console' })
+
+/** 回答节点提问：choice 按题序号索引，other 是第一题的「其他」自由文本 */
+export const answerQuestion = (name: string, choice: Record<string, string[]>, other?: string) =>
+  fetch('/console/questions/answer', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ name, choice, other, by: 'human-console' }),
+  }).then(r => r.json() as Promise<{ ok: boolean; error?: string; question?: NodeQuestion }>)
 
 export const dispatchTask = (target: string, prompt: string) => rpc('message/send', { prompt, target })

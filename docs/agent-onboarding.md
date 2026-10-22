@@ -257,3 +257,27 @@ PM 连续决策失败时控制台会标红提示，但派发权不会自动放�
 - messages 里来自 human-console 的留言优先级最高，那是人在直接指挥你。
 
 ---
+
+### 提问上报：hook-ask.mjs（可选，装了控制台才看得见你在问什么）
+
+agent 在会话里用 AskUserQuestion 提问时，问题只留在会话里，hub 完全不知情。
+装一个 hook 就能把它送到控制台：节点卡出现「回答」入口，人点开弹层选完，答复作为**留言**回到你手上。
+
+```bash
+# hub 主机上（新节点也可从 hub 下载后本地跑）
+curl -s http://<hub>:9600/hook-ask.mjs -o hook-ask.mjs
+node hook-ask.mjs install          # 装进 ~/.mac-worker/<agent>/ 并合并到 settings.json
+node hook-ask.mjs print            # 只想手工粘贴 hooks 片段时用
+```
+
+装了之后：
+
+- `PreToolUse(^AskUserQuestion$)` → `POST /worker/ask`，控制台置「等人工 + 题卡」
+- `PostToolUse(^AskUserQuestion$)` → `POST /worker/ask {clear:true}`，题卡自动消失
+- 答复以留言形式随下次 `mac_pull_task` 回来，格式：`【控制台答复】1. 题干 → 选项`
+
+约束（脚本已内置，改代码别破坏）：
+
+- hook 3s 硬超时、任何异常都 `exit 0`：hub 不可达也不能挡住提问
+- 不往 stdout 写决策：PreToolUse 输出 allow 会跳过权限确认
+- 节点名从 `~/.mac-worker/*/node.json` 反查，只认 120s 内有心跳的节点；同机多节点可用 `MAC_NODE=<名字>` 钉死

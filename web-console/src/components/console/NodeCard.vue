@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { Mail, Monitor, Pencil, TrendingUp, TriangleAlert } from 'lucide-vue-next'
+import { Mail, MessageCircleQuestion, Check, Monitor, Pencil, TrendingUp, TriangleAlert } from 'lucide-vue-next'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
@@ -23,6 +23,8 @@ const emit = defineEmits<{
   (e: 'delete-node', name: string): void
   /** 卡片整体被点击：请求把 3D 视点导航到该节点 */
   (e: 'select', name: string): void
+  /** 打开提问弹层（题卡空间由首页统一提供，卡片只做入口） */
+  (e: 'answer', name: string): void
 }>()
 
 const store = useConsoleStore()
@@ -132,6 +134,21 @@ async function send() {
       <p v-if="waiting" class="flex items-start gap-1 text-sm font-medium text-amber-600">
         <TriangleAlert class="mt-0.5 h-4 w-4 shrink-0" />
         <span class="line-clamp-2">等待人工：{{ waiting }}</span>
+      </p>
+      <!-- 结构化提问只给入口：卡片太窄，题卡放不下，实答在弹层里（ConsoleHome 统一托管） -->
+      <Button
+        v-if="presence.question && !presence.question.answer"
+        size="xs"
+        variant="outline"
+        class="mt-1 w-fit gap-1 border-amber-500/50 text-amber-600 hover:bg-amber-500/10"
+        @click.stop="emit('answer', presence.card.name)"
+      >
+        <MessageCircleQuestion class="size-3.5" />
+        回答{{ presence.question.questions.length > 1 ? `（${presence.question.questions.length} 问）` : '' }}
+      </Button>
+      <p v-else-if="presence.question?.answer" class="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
+        <Check class="h-3.5 w-3.5 text-emerald-500" />
+        已答复 {{ new Date(presence.question.answer.at).toLocaleTimeString('zh-CN', { hour12: false }) }} · 待节点确认
       </p>
       <p class="flex items-center gap-1 line-clamp-1 text-sm text-muted-foreground">
         <TrendingUp v-if="working" class="h-4 w-4 text-blue-500" />

@@ -1,0 +1,356 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>节点待人工确认 · 交互 demo</title>
+<style>
+  :root {
+    --bg: #0a0a0b; --panel: #141416; --panel-2: #1b1b1f; --border: #2a2a2e;
+    --fg: #e8e8ec; --muted: #9a9aa3; --faint: #6f6f78;
+    --amber: #f59e0b; --amber-bg: rgba(245, 158, 11, .08);
+    --blue: #5b9dff; --green: #4ade80;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 28px 24px 56px; background: var(--bg); color: var(--fg);
+    font-family: ui-sans-serif, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    font-size: 14px; line-height: 1.6;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; }
+  h1 { font-size: 18px; font-weight: 500; margin: 0 0 6px; }
+  .sub { color: var(--muted); font-size: 13px; margin: 0 0 4px; }
+  .flow { color: var(--faint); font-size: 12px; margin: 0 0 22px; }
+  .flow b { color: var(--muted); font-weight: 500; }
+  .tabs { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
+  .tab {
+    padding: 5px 12px; border-radius: 8px; border: 1px solid var(--border);
+    background: transparent; color: var(--muted); font-size: 12px; cursor: pointer;
+    font-family: inherit; transition: .15s;
+  }
+  .tab:hover { color: var(--fg); border-color: #3d3d44; }
+  .tab.on { background: var(--panel-2); color: var(--fg); border-color: #4a4a52; }
+  .grid { display: grid; grid-template-columns: 320px minmax(0, 1fr); gap: 24px; align-items: start; }
+  @media (max-width: 860px) { .grid { grid-template-columns: 1fr; } }
+
+  /* ── 节点卡：首页真实尺寸（aside 宽 300px 左右） ── */
+  .card {
+    background: var(--panel); border: 1px solid rgba(91,157,255,.45); border-radius: 12px;
+    padding: 12px 14px 14px; box-shadow: 0 0 0 1px rgba(91,157,255,.18);
+  }
+  .row { display: flex; align-items: center; gap: 8px; }
+  .dot { width: 7px; height: 7px; border-radius: 999px; display: inline-block; }
+  .name { font-size: 13.5px; font-weight: 500; }
+  .status { margin-left: auto; font-size: 11.5px; color: var(--muted); display: flex; align-items: center; gap: 5px; }
+  .role { font-size: 16px; font-weight: 500; margin: 6px 0 2px; }
+  .meta { font-size: 11.5px; color: var(--muted); }
+  .wait { display: flex; align-items: flex-start; gap: 4px; margin-top: 8px; font-size: 12.5px; color: #fbbf24; }
+  .wait .txt { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .card .btn { margin-top: 8px; }
+
+  .btn {
+    height: 28px; padding: 0 11px; border-radius: 8px; border: 1px solid var(--border);
+    background: transparent; color: var(--fg); font-family: inherit; font-size: 12px; cursor: pointer;
+    display: inline-flex; align-items: center; gap: 5px; font-weight: 400;
+  }
+  .btn:hover { background: var(--panel-2); }
+  .btn.primary { background: #ededf0; color: #101012; border-color: transparent; font-weight: 500; }
+  .btn.primary:hover { background: #fff; }
+  .btn.amber { border-color: rgba(245,158,11,.5); color: #fbbf24; }
+  .btn.amber:hover { background: rgba(245,158,11,.12); }
+  .hintline { font-size: 11.5px; color: var(--faint); margin: 10px 0 0; }
+
+  /* 置顶提醒条：一行装下，宽度 w-fit */
+  .bar {
+    display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px 10px;
+    border: 1px solid rgba(245,158,11,.6); background: var(--amber-bg);
+    border-radius: 7px; padding: 5px 10px; margin-bottom: 14px; font-size: 12px;
+    color: rgba(251,191,36,.9);
+  }
+  .bar .bang { color: var(--amber); font-weight: 700; }
+  .bar b { color: #fbbf24; font-weight: 500; }
+  .bar .cnt { font-size: 11px; background: rgba(245,158,11,.2); border-radius: 5px; padding: 0 6px; }
+  .bar .x { color: var(--faint); margin-left: 4px; cursor: pointer; }
+  .btn.tiny { height: 18px; padding: 0 6px; font-size: 11px; border-color: rgba(245,158,11,.5); color: #fbbf24; border-radius: 5px; }
+
+  /* ── 弹层：题卡真正待的地方 ── */
+  .modal {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 14px;
+    padding: 16px 18px 18px; box-shadow: 0 18px 50px rgba(0,0,0,.55);
+  }
+  .modal-head { display: flex; align-items: flex-start; gap: 8px; }
+  .modal-head .ic { color: var(--amber); font-size: 15px; line-height: 1.5; }
+  .modal-title { font-size: 15px; font-weight: 500; }
+  .modal-desc { font-size: 12px; color: var(--muted); margin: 2px 0 0; }
+  .modal-x { margin-left: auto; color: var(--faint); cursor: pointer; font-size: 15px; background: none; border: 0; }
+  .modal-x:hover { color: var(--fg); }
+  .closed { border-style: dashed; border-color: var(--border); color: var(--faint); font-size: 12px; text-align: center; padding: 26px 16px; border-radius: 12px; }
+
+  .ask { margin-top: 14px; border: 1px solid rgba(245,158,11,.45); background: var(--amber-bg); border-radius: 10px; padding: 10px 12px 12px; }
+  .ask-head { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 500; color: #fbbf24; }
+  .ask-head .t { margin-left: auto; color: var(--faint); font-weight: 400; }
+  .ctx { font-size: 11px; color: var(--muted); margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .q { margin-top: 12px; }
+  .q-head { font-size: 10.5px; letter-spacing: .05em; color: var(--muted); text-transform: uppercase; }
+  .q-text { font-size: 14px; font-weight: 500; margin: 2px 0 8px; }
+  .opts { display: flex; flex-direction: column; gap: 6px; }
+  .opt {
+    display: flex; align-items: flex-start; gap: 8px; width: 100%; text-align: left;
+    padding: 7px 9px; border-radius: 8px; border: 1px solid var(--border);
+    background: transparent; color: var(--fg); font-family: inherit; cursor: pointer; transition: .12s;
+  }
+  .opt:hover { background: var(--panel-2); }
+  .opt.on { border-color: var(--blue); background: rgba(91,157,255,.1); }
+  .opt:disabled { cursor: default; }
+  .mark {
+    width: 16px; height: 16px; flex: 0 0 16px; margin-top: 2px; border: 1px solid #4a4a52;
+    display: flex; align-items: center; justify-content: center; font-size: 11px; color: #0a0a0b;
+  }
+  .mark.radio { border-radius: 999px; }
+  .mark.check { border-radius: 4px; }
+  .opt.on .mark { background: var(--blue); border-color: var(--blue); }
+  .opt-label { font-size: 13.5px; line-height: 1.35; display: block; }
+  .opt-desc { font-size: 11.5px; color: var(--muted); line-height: 1.4; display: block; }
+  .other {
+    width: 100%; margin-top: 6px; height: 30px; padding: 0 10px; border-radius: 8px;
+    border: 1px solid var(--border); background: rgba(0,0,0,.25); color: var(--fg);
+    font-family: inherit; font-size: 12.5px; outline: none;
+  }
+  .other:focus { border-color: #4a4a52; }
+  .other::placeholder { color: var(--faint); }
+  .foot { display: flex; align-items: center; gap: 8px; margin-top: 12px; }
+  .foot .tip { font-size: 11px; color: var(--faint); }
+  .answered { margin-top: 10px; border-top: 1px solid rgba(245,158,11,.3); padding-top: 8px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 11px; color: var(--muted); }
+  .pill { padding: 1px 6px; border-radius: 5px; background: var(--panel-2); border: 1px solid var(--border); font-size: 10.5px; }
+  .pill.ok { background: rgba(74,222,128,.12); border-color: rgba(74,222,128,.35); color: #86efac; }
+
+  .side { display: flex; flex-direction: column; gap: 14px; margin-top: 16px; }
+  .side h2 { font-size: 11.5px; font-weight: 500; color: var(--muted); margin: 0 0 8px; letter-spacing: .04em; }
+  pre {
+    margin: 0; padding: 12px; border-radius: 10px; background: #0e0e10; border: 1px solid var(--border);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11.5px;
+    line-height: 1.65; color: #d4d4d8; overflow-x: auto;
+  }
+  .k { color: #93c5fd; } .s { color: #a5d6a7; }
+  .notes { font-size: 11.5px; color: var(--muted); display: flex; flex-direction: column; gap: 6px; }
+  .notes b { color: var(--fg); font-weight: 500; }
+  .notes span { color: var(--faint); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>节点首页 · 待人工确认</h1>
+  <p class="sub">agent 触发 <b>AskUserQuestion</b> → hook 上报 hub → 节点卡出现「回答」入口 → 人点开弹层选答 → 答复作为<b>留言</b>投回节点。</p>
+  <p class="flow">题卡不塞进节点卡（300px 放不下），只挂在弹层里。三种形态：<b>单选</b> · <b>多选</b> · <b>已答复</b>。</p>
+
+  <div class="tabs">
+    <button class="tab on" data-sc="single">① 单选（部署环境）</button>
+    <button class="tab" data-sc="multi">② 多选（改动范围）</button>
+    <button class="tab" data-sc="answered">③ 已答复（答完的状态）</button>
+  </div>
+
+  <!-- 真实尺寸的置顶提醒条：单行紧凑，宽度随内容，不铺满整行 -->
+  <div class="bar" id="banner">
+    <span class="bang">!</span>
+    <b>1 个节点等人工</b>
+    <span class="cnt">1 个待选答</span>
+    <span id="barname">wb-dev-pc-win11</span>：<span id="bartext">发布到哪套环境？</span>
+    <button class="btn tiny" id="baranswer">回答</button>
+    <span class="x">✕</span>
+  </div>
+
+  <div class="grid">
+    <div>
+      <div class="card" id="nodecard"></div>
+      <p class="hintline">节点卡只到这里：状态、角色、一句「等待人工：题干…」和一个入口按钮。</p>
+    </div>
+
+    <div>
+      <div id="modalslot"></div>
+      <div class="side">
+        <div>
+          <h2>提交时 POST 的内容</h2>
+          <pre id="payload"></pre>
+        </div>
+        <div class="notes">
+          <div><b>提交 →</b> <span>POST /console/questions/answer</span></div>
+          <div><b>hub 落成留言 →</b> <span>节点下次领活时随任务带回：「【控制台答复】1. 发布到哪套环境？ → 预发」</span></div>
+          <div><b>hook 收到 PostToolUse →</b> <span>POST /worker/ask {"{clear:true}"}，弹层与 badge 一起消失</span></div>
+          <div><b>没人答 →</b> <span>卡片保持「等人工」、banner 一直挂着；不推进工单状态，也不占任务队列</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  const SCENARIOS = {
+    single: {
+      status: '等人工', color: 'var(--amber)',
+      header: '部署环境', question: '发布到哪套环境？', multiSelect: false,
+      waiting: '发布到哪套环境？',
+      options: [
+        { label: '预发', description: '先跑一遍冒烟，半小时后我再发生产' },
+        { label: '生产', description: '跳过预发，直接灰度 10%' },
+        { label: '只出包', description: '不上线，产物给我自己验' },
+      ],
+      answered: null,
+    },
+    multi: {
+      status: '等人工', color: 'var(--amber)',
+      header: '改动范围', question: '这次一起带上哪些修复？（可多选）', multiSelect: true,
+      waiting: '这次一起带上哪些修复？（共 4 项）',
+      options: [
+        { label: '登录态 401 兜底', description: 'token 过期自动跳登录，不再白屏' },
+        { label: '订单列表分页', description: '20 条/页，滚到底加载' },
+        { label: 'H5 适配', description: '移动端订单卡在 375px 下换行' },
+        { label: '暂不夹带', description: '只修当前这一处，其余留给下一单' },
+      ],
+      answered: null,
+    },
+    answered: {
+      status: '执行中', color: 'var(--blue)',
+      header: '部署环境', question: '发布到哪套环境？', multiSelect: false,
+      waiting: '',
+      options: [
+        { label: '预发', description: '先跑一遍冒烟，半小时后我再发生产' },
+        { label: '生产', description: '跳过预发，直接灰度 10%' },
+        { label: '只出包', description: '不上线，产物给我自己验' },
+      ],
+      answered: { choice: { '0': ['预发'] }, other: '发完通知我', at: '15:31:08' },
+    },
+  };
+
+  let sc = 'single';
+  let choice = {};
+  let other = '';
+  let open = true;
+
+  const esc = s => String(s).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+  const pick = i => choice[String(i)] || [];
+  const done = () => !!SCENARIOS[sc].answered;
+
+  function renderCard() {
+    const s = SCENARIOS[sc];
+    const d = done();
+    document.getElementById('nodecard').innerHTML =
+      '<div class="row">' +
+        '<span class="dot" style="background:' + s.color + '"></span>' +
+        '<span class="name">wb-dev-pc-win11</span>' +
+        '<span class="status"><span class="dot" style="background:' + s.color + '"></span>' + s.status + '</span>' +
+      '</div>' +
+      '<p class="role">前端工程师 <span style="font-size:12px;color:var(--faint)">✎</span></p>' +
+      '<p class="meta">ord-a31f9c 修登录页 401 兜底 · 心跳 15:26:41</p>' +
+      (d
+        ? '<p class="meta" style="margin-top:8px;display:flex;align-items:center;gap:4px;color:var(--muted)"><span style="color:var(--green)">✓</span> 已答复 ' + s.answered.at + ' · 待节点确认</p>'
+        : '<p class="wait"><span>!</span><span class="txt">等待人工：' + esc(s.waiting) + '</span></p>' +
+          '<button class="btn amber" id="openAsk">? 回答</button>') +
+      '';
+    const btn = document.getElementById('openAsk');
+    if (btn) btn.addEventListener('click', () => { open = !open; render(); });
+  }
+
+  function renderModal() {
+    const s = SCENARIOS[sc];
+    const d = done();
+    const slot = document.getElementById('modalslot');
+    if (!open) {
+      slot.innerHTML = '<div class="closed">题卡已收起 — 点左侧卡片上的「回答」重新打开</div>';
+      return;
+    }
+    slot.innerHTML =
+      '<div class="modal">' +
+        '<div class="modal-head">' +
+          '<span class="ic">?</span>' +
+          '<div>' +
+            '<div class="modal-title">wb-dev-pc-win11 在等你确认</div>' +
+            '<p class="modal-desc">选项由 agent 提问时一并上报；提交后作为一条留言投回节点</p>' +
+          '</div>' +
+          '<button class="modal-x" id="closeAsk">✕</button>' +
+        '</div>' +
+        '<div class="ask">' +
+          '<div class="ask-head"><span>' + (d ? '已答复 · 待节点确认' : '待人工确认') + '</span><span class="t">15:26:41</span></div>' +
+          '<p class="ctx">demo-app · 修登录页 401 报错</p>' +
+          '<div class="q">' +
+            '<p class="q-head">' + esc(s.header) + '</p>' +
+            '<p class="q-text">' + esc(s.question) + '</p>' +
+            '<div class="opts">' +
+              s.options.map(o => {
+                const on = pick(0).includes(o.label);
+                return '<button class="opt' + (on ? ' on' : '') + '" data-l="' + esc(o.label) + '"' + (d ? ' disabled' : '') + '>' +
+                  '<span class="mark ' + (s.multiSelect ? 'check' : 'radio') + '">' + (on ? '✓' : '') + '</span>' +
+                  '<span><span class="opt-label">' + esc(o.label) + '</span><span class="opt-desc">' + esc(o.description) + '</span></span>' +
+                '</button>';
+              }).join('') +
+            '</div>' +
+            (d
+              ? (other ? '<p class="ctx" style="margin-top:6px">其他：' + esc(other) + '</p>' : '')
+              : '<input class="other" id="other" placeholder="其他（补充一句，会一起回给节点）" value="' + esc(other) + '" />') +
+          '</div>' +
+          (d
+            ? '<div class="answered"><span class="pill ok">已答复</span><span>' + s.answered.at + '</span><span>·</span><span>已作为留言投递给节点，等它确认</span></div>'
+            : '<div class="foot"><button class="btn primary" id="submit">提交答复</button><span class="tip">答复会作为留言送达 wb-dev-pc-win11</span></div>') +
+        '</div>' +
+      '</div>';
+
+    slot.querySelectorAll('.opt').forEach(el => el.addEventListener('click', () => {
+      const label = el.dataset.l, cur = pick(0);
+      choice['0'] = s.multiSelect ? (cur.includes(label) ? cur.filter(x => x !== label) : [...cur, label]) : (cur[0] === label ? [] : [label]);
+      render();
+    }));
+    const otherEl = document.getElementById('other');
+    if (otherEl) {
+      otherEl.addEventListener('input', e => { other = e.target.value; payload(); });
+      otherEl.addEventListener('keydown', e => { if (e.key === 'Enter') submit(); });
+    }
+    const sub = document.getElementById('submit');
+    if (sub) sub.addEventListener('click', submit);
+    document.getElementById('closeAsk').addEventListener('click', () => { open = false; render(); });
+  }
+
+  function payload() {
+    document.getElementById('payload').innerHTML = jsonHtml({ name: 'wb-dev-pc-win11', choice, other: other || '', by: 'human-console' });
+  }
+
+  function jsonHtml(o) {
+    return esc(JSON.stringify(o, null, 2))
+      .replace(/&quot;([^&]+?)&quot;(\s*:)/g, '<span class="k">"$1"</span>$2')
+      .replace(/: &quot;([^&]*?)&quot;/g, ': <span class="s">"$1"</span>');
+  }
+
+  function submit() {
+    const s = SCENARIOS[sc];
+    if (pick(0).length === 0 && !other.trim()) {
+      const tip = document.querySelector('.foot .tip');
+      if (tip) { tip.textContent = '先选一项，或在「其他」里写一句'; tip.style.color = 'var(--amber)'; }
+      return;
+    }
+    s.answered = { choice: JSON.parse(JSON.stringify(choice)), other: other, at: new Date().toLocaleTimeString('zh-CN', { hour12: false }) };
+    s.status = '执行中'; s.color = 'var(--blue)';
+    open = false;   // 答完弹层收起，卡片只剩「已答复 15:31 · 待节点确认」
+    render();
+  }
+
+  function render() {
+    const s = SCENARIOS[sc];
+    const bar = document.getElementById('banner');
+    bar.style.display = done() ? 'none' : 'inline-flex';
+    document.getElementById('bartext').textContent = s.waiting;
+    document.getElementById('baranswer').onclick = () => { open = true; render(); };
+    renderCard(); renderModal(); payload();
+  }
+
+  document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(x => x.classList.remove('on'));
+    t.classList.add('on');
+    sc = t.dataset.sc;
+    choice = {}; other = ''; open = true;
+    const a = SCENARIOS[sc].answered;
+    if (a) { choice = JSON.parse(JSON.stringify(a.choice)); other = a.other; open = false; }
+    render();
+  }));
+
+  render();
+</script>
+</body>
+</html>

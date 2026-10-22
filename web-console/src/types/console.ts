@@ -10,6 +10,43 @@ export interface AgentCard {
 
 export type NodeState = 'idle' | 'working' | string
 
+/** 提问选项：label 是回给 agent 的原文，description 是给人看的补充说明 */
+export interface AskOption {
+  label: string
+  description?: string
+}
+
+/** 单个问题：与 AskUserQuestion 的 questions[] 逐字段对齐 */
+export interface AskQuestion {
+  question: string
+  /** 题干短标签，如「部署方式」 */
+  header?: string
+  multiSelect?: boolean
+  options?: AskOption[]
+}
+
+/** 控制台对一条提问的答复（回写在同一对象上，答完仍可回看） */
+export interface QuestionAnswer {
+  at: number
+  by: string
+  /** 实际投递给节点的留言正文 */
+  text: string
+  /** 逐题选择：key 是题序号字符串，value 是选中的 label */
+  choice?: Record<string, string[]>
+}
+
+/** 节点当前待人工确认的提问：由 agent 侧 hook 上报 */
+export interface NodeQuestion {
+  id: string
+  at: number
+  kind: string
+  title?: string
+  taskId?: string
+  sessionId?: string
+  questions: AskQuestion[]
+  answer?: QuestionAnswer
+}
+
 /** 角色库条目：名字是节点指派的依据，desc 是给人看的一句话职责 */
 export interface RoleDef {
   name: string
@@ -35,6 +72,8 @@ export interface Presence {
   queuedCount?: number
   /** 排队任务摘要列表（最多5条），3D 拓扑任务牌逐条显示 */
   queuedItems?: string[]
+  /** 待人工确认的提问：有 questions 时控制台渲染成可点选的题卡 */
+  question?: NodeQuestion
 }
 
 /** 派发权状态：human 人工模式 / pm PM 接管 */

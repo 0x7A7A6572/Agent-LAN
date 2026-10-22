@@ -26,6 +26,38 @@ import { mcpHandle, type McpFacadeDeps } from "./mcp-facade.js";
 export { createTui } from "./tui.js";
 export { createRemoteProxy } from "./remote-proxy.js";
 
+// ── 结构化提问 ────────────────────────────────────────────────────────
+// agent 的 AskUserQuestion（或计划确认）由节点侧 hook 原样送到 hub，
+// 控制台据此渲染成「可点选」的题卡；只有一句 waitingFor 文本时人能看不能选。
+export interface AskOption { label: string; description?: string }
+export interface AskQuestion {
+  question: string;
+  /** 题干上方的短标签（AskUserQuestion 的 header，如「部署方式」） */
+  header?: string;
+  multiSelect?: boolean;
+  options?: AskOption[];
+}
+export interface QuestionAnswer {
+  at: number;
+  by: string;
+  /** 回给节点的那段文本，与留言同体 */
+  text: string;
+  /** 逐题选择：key 是题序号（字符串），value 是选中的 label 列表 */
+  choice?: Record<string, string[]>;
+}
+export interface NodeQuestion {
+  id: string;
+  at: number;
+  /** 来源：ask=AskUserQuestion / plan=计划确认 / text=纯文本 */
+  kind: string;
+  /** 节点自报的一句话上下文（通常在干什么） */
+  title?: string;
+  taskId?: string;
+  sessionId?: string;
+  questions: AskQuestion[];
+  answer?: QuestionAnswer;
+}
+
 export interface ServerOptions {
   card: AgentCard;
   adapter: AgentAdapter;
@@ -545,13 +577,16 @@ export function createServer(options: ServerOptions): http.Server {
     log("[task] " + taskId.slice(0, 8) + " -> " + t.state + " (by agent)");
     if (state === "input-required") {
       // 通知通路：此前只写日志，控制台无感知；现随名册下发 waitingFor
-      if (by) registry.setWaiting(by, text || "等待人工确认");
+      // 已有结构化题卡时不覆盖：题卡自带摘要，覆盖会让控制台回退成纯文本
+      if (by && !questionStore.has(by)) registry.setWaiting(by, text || "等待人工确认");
       log("[!!] 任务 " + taskId.slice(0, 8) + " 等待人工确认" + (text ? ": " + text.slice(0, 120) : ""));
     } else if (state === "working") {
       // 开工上报：置执行态（workingOn 带任务摘要，控制台才显示在忙什么）
       if (by) registry.setBusy(by, true, workingOnOf(t), "agent", AGENT_BUSY_TTL_MS);
     } else if (by) {
       registry.setWaiting(by, undefined);
+      // 任务收尾：题卡没有意义了，留着会让 banner 一直挂着没人能答的题
+      clearQuestion(by, "任务已 " + state);
       // 该任务已终态：节点若没别的在跑任务，执行态要回到空闲
       const stillBusy = [...tasks.values()].some(x =>
         x.id !== taskId && x.state === "working" && x.deliveredTo === by && !x.reportedAt);
@@ -840,6 +875,34 @@ export function createServer(options: ServerOptions): http.Server {
     }
     return task.prompt.slice(0, 24) + (task.prompt.length > 24 ? "…" : "");
   };
+  // ── 待人工确认（结构化提问）────────────────────────────────────────
+  // 只登记「有人在等」这一件事，不动任务状态机：等人回答 ≠ 任务推进。
+  // 一个节点同一时刻只挂一条：重复提问覆盖前一条（避免题卡越堆越多）。
+  const questionStore: Map<string, NodeQuestion> = new Map();
+
+  /** 一句话摘要：banner 与节点卡标题都用它，取第一问 */
+  function questionSummary(q: NodeQuestion): string {
+    const first = q.questions[0]?.question?.trim();
+    const head = q.questions.length > 1 ? "[共 " + q.questions.length + " 问] " : "";
+    const text = first || q.title || "节点请求人工确认";
+    return head + (text.length > 60 ? text.slice(0, 60) + "…" : text);
+  }
+
+  /** 置位待答提问，并同步 waitingFor：控制台 banner / 节点卡两处都读它 */
+  function setQuestion(name: string, q: NodeQuestion): void {
+    questionStore.set(name, q);
+    registry.setWaiting(name, questionSummary(q));
+    pushPresence();
+    log("[ask] " + name + " 待人工确认：" + questionSummary(q));
+  }
+
+  function clearQuestion(name: string, reason?: string): void {
+    if (!questionStore.delete(name)) return;
+    registry.setWaiting(name, undefined);
+    pushPresence();
+    log("[ask] " + name + " 待人工确认已清除" + (reason ? "（" + reason + "）" : ""));
+  }
+
   // 名册快照附带 hub 侧角色与排队任务数：控制台据此展示与选人。
   // queuedItems：排队任务摘要列表，3D 拓扑的任务牌逐条显示用
   const withRoles = (list: AgentPresence[]) =>
@@ -851,7 +914,9 @@ export function createServer(options: ServerOptions): http.Server {
         .filter(t => !isTerminal(t.state))
         .slice(0, 5)
         .map(t => workingOnOf(t)),
-      pendingMail: mailOf(p.card.name)
+      pendingMail: mailOf(p.card.name),
+      // 结构化提问随名册下发：控制台据此渲染选项，而不是只显示一句文本
+      question: questionStore.get(p.card.name)
     }));
   // 落盘是防抖的：退出前同步 flush，防尾写丢失
   const flushStores = () => { orderStore.flushNow(); registry.flushNow(); flushQueues(); flushTasks(); };
@@ -1242,6 +1307,14 @@ export function createServer(options: ServerOptions): http.Server {
       res.end(JSON.stringify({ ok: true }));
       return;
     }
+    // 提问 hook 脚本：节点一条命令下载，装进 CLI 的 hooks（见 hook-ask.mjs install）
+    if (req.method === "GET" && url.pathname === "/hook-ask.mjs") {
+      const file = path.join(path.dirname(fileURLToPath(import.meta.url)), "hook-ask.mjs");
+      if (!fs.existsSync(file)) { res.writeHead(404, { connection: "close" }); res.end(); return; }
+      res.writeHead(200, { "content-type": "text/javascript; charset=utf-8", connection: "close" });
+      res.end(fs.readFileSync(file, "utf8"));
+      return;
+    }
     if (req.method === "GET" && url.pathname === "/probe.sh") {
       res.writeHead(200, { "content-type": "text/x-shellscript; charset=utf-8" });
       res.end(probeScript());
@@ -1579,6 +1652,105 @@ export function createServer(options: ServerOptions): http.Server {
         res.end(JSON.stringify({ error: String(err?.message ?? err) }));
       }
       return;
+    }
+    // ── 节点提问上报：PreToolUse hook 与节点自报共用同一个入口 ──────────
+    // 只登记「有人在等」，不动任务状态机；答复走 /console/questions/answer。
+    if (req.method === "POST" && url.pathname === "/worker/ask") {
+      const json = (code: number, obj: unknown) => {
+        res.writeHead(code, { "content-type": "application/json", connection: "close" });
+        res.end(JSON.stringify(obj));
+      };
+      let body = "";
+      for await (const chunk of req) body += chunk;
+      let b: Record<string, any> = {};
+      try { b = JSON.parse(body || "{}"); } catch { return json(400, { ok: false, error: "body 不是合法 JSON" }); }
+      const name = String(b.name ?? "").trim();
+      if (!name) return json(400, { ok: false, error: "缺少 name（节点名）" });
+      if (!registry.find(name)) return json(404, { ok: false, error: "节点未注册: " + name + "（先 mac_check_in 再提问）" });
+      if (b.clear) {
+        const prev = questionStore.get(name);
+        // 精确清除：hook 回传的 id 与当前不符 = 期间又提了新问，不能连新的也清掉
+        if (b.expectId && prev && prev.id !== String(b.expectId)) {
+          return json(200, { ok: true, cleared: false, skipped: "提问已被新的覆盖" });
+        }
+        clearQuestion(name, "节点自清（提问已答完）");
+        return json(200, { ok: true, cleared: true });
+      }
+      const questions: AskQuestion[] = (Array.isArray(b.questions) ? b.questions : [])
+        .slice(0, 8)
+        .map((raw: any) => ({
+          question: String(raw?.question ?? "").trim(),
+          header: raw?.header ? String(raw.header).slice(0, 40) : undefined,
+          multiSelect: !!raw?.multiSelect,
+          options: (Array.isArray(raw?.options) ? raw.options : [])
+            .slice(0, 8)
+            .map((o: any) => ({
+              label: String(o?.label ?? "").trim(),
+              description: o?.description ? String(o.description).slice(0, 200) : undefined
+            }))
+            .filter((o: AskOption) => o.label)
+        }))
+        .filter(q => q.question);
+      const title = b.title ? String(b.title).slice(0, 300) : undefined;
+      if (!questions.length && !title) return json(400, { ok: false, error: "questions 与 title 至少给一个" });
+      // hook 重试（同一问连发两次）：沿用原题，不刷屏也不丢原来的答复态
+      const prev = questionStore.get(name);
+      if (prev && Date.now() - prev.at < 5000 && (prev.questions[0]?.question ?? "") === (questions[0]?.question ?? "")) {
+        return json(200, { ok: true, id: prev.id, deduped: true });
+      }
+      const q: NodeQuestion = {
+        id: randomUUID(), at: Date.now(), kind: String(b.kind ?? "ask"), title,
+        taskId: b.taskId ? String(b.taskId) : undefined,
+        sessionId: b.sessionId ? String(b.sessionId) : undefined,
+        questions
+      };
+      setQuestion(name, q);
+      return json(200, { ok: true, id: q.id });
+    }
+    // 题卡全量：演示页与排障用（控制台本身走 SSE 名册，不轮询这里）
+    if (req.method === "GET" && url.pathname === "/console/questions") {
+      res.writeHead(200, { "content-type": "application/json", connection: "close" });
+      res.end(JSON.stringify({ questions: [...questionStore.entries()].map(([name, q]) => ({ name, ...q })) }));
+      return;
+    }
+    // 控制台答复：落成一条留言（与 mac_send_message 同一条通路）+ 回写题卡
+    if (req.method === "POST" && url.pathname === "/console/questions/answer") {
+      const json = (code: number, obj: unknown) => {
+        res.writeHead(code, { "content-type": "application/json", connection: "close" });
+        res.end(JSON.stringify(obj));
+      };
+      let body = "";
+      for await (const chunk of req) body += chunk;
+      let b: Record<string, any> = {};
+      try { b = JSON.parse(body || "{}"); } catch { return json(400, { ok: false, error: "body 不是合法 JSON" }); }
+      const name = String(b.name ?? "").trim();
+      const q = questionStore.get(name);
+      if (!q) return json(404, { ok: false, error: "该节点没有待回答的提问: " + (name || "(空)") });
+      if (q.answer) return json(409, { ok: false, error: "这条提问已经答复过了", question: q });
+      const choice = (b.choice && typeof b.choice === "object" ? b.choice : {}) as Record<string, string[]>;
+      const other = String(b.other ?? "").trim();
+      const lines = q.questions.map((item, i) => {
+        const picked = Array.isArray(choice[String(i)]) ? choice[String(i)].map(String) : [];
+        const parts = [picked.join("、"), i === 0 ? other : ""].filter(Boolean);
+        return i + 1 + ". " + item.question + " → " + (parts.join("；") || "（未选）");
+      });
+      if (!q.questions.length) lines.push("→ " + (other || "（无补充）"));
+      const text = "【控制台答复】" + (q.title ? " 关于「" + q.title + "」" : "") + "\n" +
+        lines.join("\n") + "\n请据此继续，不要再重复提问。";
+      // 与 mac_send_message 同一条信箱通路：节点下次领活时随任务带回
+      if (!mailboxes.has(name)) mailboxes.set(name, []);
+      mailboxes.get(name)!.push({ text, from: String(b.by ?? "human-console"), at: new Date().toISOString() });
+      q.answer = { at: Date.now(), by: String(b.by ?? "human-console"), text, choice };
+      questionStore.set(name, q);
+      registry.setWaiting(name, undefined);
+      pushPresence();
+      log("[ask] 控制台答复 " + name + "：" + lines.join(" / ").slice(0, 200));
+      // 任务因等人被打到 input-required：答复即视为放行，拉回 working（工单同步解除 blocked）
+      if (q.taskId) {
+        const t = tasks.get(q.taskId);
+        if (t && t.state === "input-required") reportResult(q.taskId, "working", "控制台已答复，继续执行", undefined, name);
+      }
+      return json(200, { ok: true, question: q });
     }
     if (url.pathname === "/mcp") {
       res.setHeader("access-control-allow-origin", "*");
